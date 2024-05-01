@@ -1,0 +1,60 @@
+{
+    "name": "notifiableapp/receive-email",
+    "description": "Let your Laravel app receive emails.",
+    "keywords": [
+        "laravel",
+        "inbound-email",
+        "inbound-emails",
+        "receive-email",
+        "receive-emails"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Prince John Santillan",
+            "email": "mail@princejohnsantillan.net"
+        }
+    ],
+    "require": {
+        "illuminate/support": "^11.6"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.15",
+        "larastan/larastan": "^2.9",
+        "pestphp/pest": "^2.34",
+        "orchestra/testbench": "^9.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Notifiable\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Notifiable\\Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Notifiable\\ReceiveEmailServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "scripts": {
+        "review": [
+            "@php vendor/bin/pint",
+            "@php vendor/bin/phpstan analyse"
+        ]
+    }
+}
