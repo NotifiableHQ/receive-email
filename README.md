@@ -26,7 +26,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y php-cli php-mailparse
 ## Deployment
 Run this on your server to configure Postfix.
 ```bash
-php artisan notifiable:configure-postfix your-domain.com
+sudo php artisan notifiable:configure-postfix your-domain.com
 ```
 
 ## Credits

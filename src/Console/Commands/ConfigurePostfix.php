@@ -53,7 +53,7 @@ class ConfigurePostfix extends ConsoleCommand
      * - Add smtpd_recipient_restrictions
      * - Add local_recipient_maps
      */
-    private function configureMainConfigFile($newDomain): void
+    private function configureMainConfigFile(string $newDomain): void
     {
         $mainConfig = $this->getConfigPath('main.cf');
 
@@ -92,7 +92,7 @@ class ConfigurePostfix extends ConsoleCommand
             return;
         }
 
-        $newContentFilter = 'smtp inet n - - - - smtpd -o content_filter=filter:dummy';
+        $newContentFilter = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
         $oldContentFilter = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newContentFilter);
 
         if (! $oldContentFilter) {

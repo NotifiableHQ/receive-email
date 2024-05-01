@@ -5,6 +5,4 @@ parameters:
     paths:
         - src/
 
-    level: 5
-
-    checkMissingIterableValueType: false
+    level: 9

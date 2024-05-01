@@ -20,6 +20,13 @@ class ReceiveEmail extends ConsoleCommand
     public function handle(): int
     {
         $stream = fopen('php://stdin', 'r');
+
+        if ($stream === false) {
+            $this->error('Could not open stream.');
+
+            return Command::FAILURE;
+        }
+
         $streamedEmail = '';
         while (! feof($stream)) {
             $streamedEmail .= fread($stream, 1024);
