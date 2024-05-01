@@ -28,3 +28,7 @@ Run this on your server to configure Postfix.
 ```bash
 php artisan notifiable:configure-postfix your-domain.com
 ```
+
+## Credits
+The solutions in this package are inspired by the following projects:
+- [Mailcare](https://gitlab.com/mailcare/mailcare)
