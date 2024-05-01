@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('received_emails', function (Blueprint $table) {
             $table->id();
             $table->string('ulid');
+            $table->timestamp('read_at')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
