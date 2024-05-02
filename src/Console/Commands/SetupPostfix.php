@@ -73,8 +73,8 @@ class SetupPostfix extends ConsoleCommand
 
         $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination';
         $localRecipientMaps = 'local_recipient_maps =';
-        file_put_contents($mainConfig, "\n$smtpdRecipientRestrictions\n", FILE_APPEND);
-        file_put_contents($mainConfig, "\n$localRecipientMaps\n", FILE_APPEND);
+        $this->upsertLine($mainConfig, $smtpdRecipientRestrictions);
+        $this->upsertLine($mainConfig, $localRecipientMaps);
 
         $this->line("Append to {$mainConfig} : {$smtpdRecipientRestrictions}");
         $this->line("Append to {$mainConfig} : {$localRecipientMaps}");
@@ -104,7 +104,7 @@ class SetupPostfix extends ConsoleCommand
         $command = $this->getReceiveEmailCommand();
 
         $deliveryMethod = "notifiable unix - n n - - pipe flags=F user=$user argv={$command}";
-        file_put_contents($masterConfig, "\n$deliveryMethod\n", FILE_APPEND);
+        $this->upsertLine($masterConfig, $deliveryMethod);
 
         $this->line("Append to {$masterConfig} : {$deliveryMethod}");
     }
@@ -153,6 +153,14 @@ class SetupPostfix extends ConsoleCommand
         $this->line("To:  {$newLine}");
 
         return $originalLine;
+    }
+
+    private function upsertLine(string $filePath, string $line): void{
+        $existingLine = $this->editLine($filePath, "/^$line$/m", $line);
+
+        if($existingLine === null){
+            file_put_contents($filePath, "\n$line\n", FILE_APPEND);
+        }
     }
 
     private function getReceiveEmailCommand(): string
