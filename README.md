@@ -12,6 +12,7 @@ composer require notifiableapp/receive-email
 apt-get update
 apt-get install -y php-cli php-mailparse
 ```
+
 2. If you already have an existing server, run this recipe on that server. 
 Otherwise, create a new server and make sure to select this recipe as a `Post-Provision Recipe`. 
 You'll have to show `Advance Settings` to select this.
@@ -22,6 +23,17 @@ You'll have to show `Advance Settings` to select this.
 ```bash
 sudo php artisan notifiable:setup-postfix your-domain.com
 ```
+
+5. Add the following DNS records to your domain:
+
+    | Type | Host                        | Value                 |
+    |------|-----------------------------|-----------------------|
+    | A    | your-application-domain.com | your.forge.ip.address |
+ 
+    | Type | Host                           | Value                | Priority |
+    |------|--------------------------------|----------------------| --- |
+    | MX   | domain-that-receives-email.com | your-application-domain.com | 10 |
+
 
 ## Research References
 - [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)
