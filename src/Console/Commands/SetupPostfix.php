@@ -143,16 +143,16 @@ class SetupPostfix extends ConsoleCommand
             return null;
         }
 
-        /** @var string $previousLine */
-        $previousLine = Arr::first($matches);
+        /** @var string $originalLine */
+        $originalLine = Arr::first($matches);
 
-        file_put_contents($filePath, str_replace($previousLine, $newLine, $content));
+        file_put_contents($filePath, str_replace($originalLine, $newLine, $content));
 
         $this->line("Editing {$filePath}...");
-        $this->line("From:\t {$filePath}");
-        $this->line("To:\t  {$filePath}");
+        $this->line("From:\t {$originalLine}");
+        $this->line("To:\t  {$newLine}");
 
-        return $previousLine;
+        return $originalLine;
     }
 
     private function getReceiveEmailCommand(): string
