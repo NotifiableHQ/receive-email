@@ -27,3 +27,4 @@ sudo php artisan notifiable:setup-postfix your-domain.com
 ## Credits
 The solutions in this package are inspired by the following projects:
 - [Mailcare](https://gitlab.com/mailcare/mailcare)
+- [Laravel Mailbox](https://github.com/beyondcode/laravel-mailbox)
