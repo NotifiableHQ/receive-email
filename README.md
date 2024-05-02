@@ -1,5 +1,4 @@
 # Receive Email
-
 Let your Laravel app receive emails.
 
 ## Installation
@@ -23,6 +22,10 @@ You'll have to show `Advance Settings` to select this.
 ```bash
 sudo php artisan notifiable:setup-postfix your-domain.com
 ```
+
+## Research References
+- [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)
+- [Installing and configuring Postfix on Ubuntu](https://ubuntu.com/server/docs/install-and-configure-postfix)
 
 ## Credits
 The solutions in this package are inspired by the following projects:
