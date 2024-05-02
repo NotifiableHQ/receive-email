@@ -161,10 +161,11 @@ class SetupPostfix extends ConsoleCommand
         }
 
         if (str($content)->contains($line)) {
-            file_put_contents($filePath, "\n$line\n", FILE_APPEND);
-
-            $this->line("Append to {$filePath} : {$line}");
+            return;
         }
+
+        file_put_contents($filePath, "\n$line\n", FILE_APPEND);
+        $this->line("Append to {$filePath} : {$line}");
     }
 
     private function getReceiveEmailCommand(): string
