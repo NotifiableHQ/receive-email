@@ -156,7 +156,7 @@ class SetupPostfix extends ConsoleCommand
     }
 
     private function upsertLine(string $filePath, string $line): void{
-        $existingLine = $this->editLine($filePath, "/^$line$/m", $line);
+        $existingLine = $this->editLine($filePath, "/$line/", $line);
 
         if($existingLine === null){
             file_put_contents($filePath, "\n$line\n", FILE_APPEND);
