@@ -148,9 +148,9 @@ class SetupPostfix extends ConsoleCommand
 
         file_put_contents($filePath, str_replace($originalLine, $newLine, $content));
 
-        $this->line("Editing {$filePath}...");
-        $this->line("From:\t {$originalLine}");
-        $this->line("To:\t  {$newLine}");
+        $this->line("--- Editing {$filePath} ---");
+        $this->line("From: {$originalLine}");
+        $this->line("To:  {$newLine}");
 
         return $originalLine;
     }
