@@ -21,7 +21,7 @@ You'll have to show `Advance Settings` to select this.
 
 4. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
 ```bash
-sudo php artisan notifiable:setup-postfix your-domain.com
+sudo php artisan notifiable:setup-postfix domain-that-receives-email.com
 ```
 
 5. Add the following DNS records to your domain:
