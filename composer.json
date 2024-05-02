@@ -16,7 +16,8 @@
         }
     ],
     "require": {
-        "illuminate/support": "^11.6"
+        "illuminate/support": "^11.6",
+        "php-mime-mail-parser/php-mime-mail-parser": "^8.0"
     },
     "require-dev": {
         "laravel/pint": "^1.15",
