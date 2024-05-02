@@ -7,26 +7,21 @@ Let your Laravel app receive emails.
 composer require notifiableapp/receive-email
 ```
 
-## Forge Recipe
+## Forge Deployment
+1. Add this to your recipes, you can name it `Install Mailparse`. Make sure the user is `root`.
 ```bash
-sudo apt-get update
-
-
-# INSTALL POSTFIX
-sudo debconf-set-selections <<< "postfix postfix/mailname string {{server_name}}" # Replace {{server_name}} with your actual domain.
-sudo debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
-
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postfix
-
-
-# INSTALL MAILPARSE
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y php-cli php-mailparse
+apt-get update
+apt-get install -y php-cli php-mailparse
 ```
+2. If you already have an existing server, run this recipe on that server. 
+Otherwise, create a new server and make sure to select this recipe as a `Post-Provision Recipe`. 
+You'll have to show `Advance Settings` to select this.
 
-## Deployment
-Run this on your server to configure Postfix.
+3. Once you have the server ready, open up `Port 25`, add your site, and deploy your Laravel app.
+
+4. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
 ```bash
-sudo php artisan notifiable:configure-postfix your-domain.com
+sudo php artisan notifiable:setup-postfix your-domain.com
 ```
 
 ## Credits

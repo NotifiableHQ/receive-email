@@ -6,20 +6,25 @@ use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Arr;
 use Symfony\Component\Console\Command\Command;
 
-class ConfigurePostfix extends ConsoleCommand
+class SetupPostfix extends ConsoleCommand
 {
     public const POSTFIX_DIR = '/etc/postfix';
 
     /** @var string */
-    protected $signature = 'notifiable:configure-postfix {domain : The domain where to receive emails from.}';
+    protected $signature = 'notifiable:setup-postfix {domain : The domain where to receive emails from.}';
 
     /** @var string */
-    protected $description = 'Configure Postfix to receive emails.';
+    protected $description = 'Install and Configure Postfix to receive emails.';
 
     public function handle(): int
     {
+        $this->info("\nSetting up Postfix\n");
+
+        $this->warn('THIS SCRIPT WILL MODIFY THE POSTFIX CONFIGURATION FILES!');
+
         $domain = $this->argument('domain');
 
+        $this->installPostfix($domain);
         $this->configureMainConfigFile($domain);
         $this->configureMasterConfigFile();
         $this->reloadPostfix();
@@ -27,24 +32,22 @@ class ConfigurePostfix extends ConsoleCommand
         return Command::SUCCESS;
     }
 
-    private function getConfigPath(string $config): ?string
+    private function installPostfix(string $domain): void
     {
-        $path = self::POSTFIX_DIR.'/'.$config;
+        $this->info("\nInstalling Postfix\n");
 
-        if (! file_exists($path)) {
-            $this->error('The config file does not exists!');
+        $postfixCheck = shell_exec('dpkg -l | grep postfix');
 
-            return null;
+        if (is_string($postfixCheck) && str($postfixCheck)->contains('postfix')) {
+            $this->line('Postfix is already installed.');
+
+            return;
         }
 
-        return $path;
-    }
-
-    private function getReceiveEmailCommand(): string
-    {
-        $artisan = base_path('artisan');
-
-        return "php $artisan notifiable:receive-email";
+        $this->line((string) shell_exec('apt-get update'));
+        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/mailname string {$domain}\""));
+        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/main_mailer_type string 'Internet Site'\""));
+        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix'));
     }
 
     /**
@@ -53,21 +56,19 @@ class ConfigurePostfix extends ConsoleCommand
      * - Add smtpd_recipient_restrictions
      * - Add local_recipient_maps
      */
-    private function configureMainConfigFile(string $newDomain): void
+    private function configureMainConfigFile(string $domain): void
     {
+        $this->info("\nConfiguring the Main config file.\n");
+
         $mainConfig = $this->getConfigPath('main.cf');
 
-        if ($mainConfig === null) {
-            return;
-        }
-
-        $newHostname = "myhostname = $newDomain";
+        $newHostname = "myhostname = $domain";
         $oldHostname = $this->editLine($mainConfig, '/^myhostname = (.*)$/m', $newHostname);
 
         if ($oldHostname === null) {
             $this->error("'myhostname' is missing from {$mainConfig}.");
 
-            return;
+            exit(Command::FAILURE);
         }
 
         $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination';
@@ -81,24 +82,22 @@ class ConfigurePostfix extends ConsoleCommand
 
     /**
      * Configure the master.cf file:
-     * - Instantiate content filter
+     * - Add SMTP daemon
      * - Add external delivery method
      */
     private function configureMasterConfigFile(): void
     {
-        $masterConfig = $this->getConfigPath('master.cf');
+        $this->info("\nConfiguring the Master config file.\n");
 
-        if ($masterConfig === null) {
-            return;
-        }
+        $masterConfig = $this->getConfigPath('master.cf');
 
         $newContentFilter = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
         $oldContentFilter = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newContentFilter);
 
-        if (! $oldContentFilter) {
+        if ($oldContentFilter === null) {
             $this->error("'smtp inet' is missing from {$masterConfig}.");
 
-            return;
+            exit(Command::FAILURE);
         }
 
         $user = get_current_user();
@@ -113,7 +112,20 @@ class ConfigurePostfix extends ConsoleCommand
     private function reloadPostfix(): void
     {
         $this->info("\nReloading postfix\n");
-        shell_exec('systemctl reload postfix');
+        $this->line((string) shell_exec('systemctl reload postfix'));
+    }
+
+    private function getConfigPath(string $config): string
+    {
+        $path = self::POSTFIX_DIR.'/'.$config;
+
+        if (! file_exists($path)) {
+            $this->error("The {$path} file does not exists!");
+
+            exit(Command::FAILURE);
+        }
+
+        return $path;
     }
 
     private function editLine(string $filePath, string $regex, string $newLine): ?string
@@ -123,7 +135,7 @@ class ConfigurePostfix extends ConsoleCommand
         if ($content === false) {
             $this->error("Failed to read file: {$filePath}");
 
-            return null;
+            exit(Command::FAILURE);
         }
 
         $matches = [];
@@ -141,5 +153,12 @@ class ConfigurePostfix extends ConsoleCommand
         $this->line("To:\t  {$filePath}");
 
         return $previousLine;
+    }
+
+    private function getReceiveEmailCommand(): string
+    {
+        $artisan = base_path('artisan');
+
+        return "php $artisan notifiable:receive-email";
     }
 }
