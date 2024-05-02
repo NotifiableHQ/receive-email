@@ -75,9 +75,6 @@ class SetupPostfix extends ConsoleCommand
         $localRecipientMaps = 'local_recipient_maps =';
         $this->upsertLine($mainConfig, $smtpdRecipientRestrictions);
         $this->upsertLine($mainConfig, $localRecipientMaps);
-
-        $this->line("Append to {$mainConfig} : {$smtpdRecipientRestrictions}");
-        $this->line("Append to {$mainConfig} : {$localRecipientMaps}");
     }
 
     /**
@@ -105,8 +102,6 @@ class SetupPostfix extends ConsoleCommand
 
         $deliveryMethod = "notifiable unix - n n - - pipe flags=F user=$user argv={$command}";
         $this->upsertLine($masterConfig, $deliveryMethod);
-
-        $this->line("Append to {$masterConfig} : {$deliveryMethod}");
     }
 
     private function reloadPostfix(): void
@@ -155,11 +150,20 @@ class SetupPostfix extends ConsoleCommand
         return $originalLine;
     }
 
-    private function upsertLine(string $filePath, string $line): void{
-        $existingLine = $this->editLine($filePath, "/$line/", $line);
+    private function upsertLine(string $filePath, string $line): void
+    {
+        $content = file_get_contents($filePath);
 
-        if($existingLine === null){
+        if ($content === false) {
+            $this->error("Failed to read file: {$filePath}");
+
+            exit(Command::FAILURE);
+        }
+
+        if (str($content)->contains($line)) {
             file_put_contents($filePath, "\n$line\n", FILE_APPEND);
+
+            $this->line("Append to {$filePath} : {$line}");
         }
     }
 
