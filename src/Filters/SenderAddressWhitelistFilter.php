@@ -1,9 +1,9 @@
 <?php
 
-namespace Notifiable\Filters;
+namespace Notifiable\ReceiveEmail\Filters;
 
 use Illuminate\Support\Facades\Config;
-use Notifiable\Contracts\EmailFilter;
+use Notifiable\ReceiveEmail\Contracts\EmailFilter;
 use PhpMimeMailParser\Parser;
 
 class SenderAddressWhitelistFilter implements EmailFilter

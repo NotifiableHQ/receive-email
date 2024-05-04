@@ -1,6 +1,6 @@
 <?php
 
-namespace Notifiable\Contracts;
+namespace Notifiable\ReceiveEmail\Contracts;
 
 use PhpMimeMailParser\Parser;
 

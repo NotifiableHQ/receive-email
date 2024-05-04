@@ -1,6 +1,6 @@
 <?php
 
-namespace Notifiable\Models;
+namespace Notifiable\ReceiveEmail\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;

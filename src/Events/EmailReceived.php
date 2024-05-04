@@ -1,11 +1,11 @@
 <?php
 
-namespace Notifiable\Events;
+namespace Notifiable\ReceiveEmail\Events;
 
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
-use Notifiable\Models\ReceivedEmail;
+use Notifiable\ReceiveEmail\Models\ReceivedEmail;
 
 class EmailReceived
 {

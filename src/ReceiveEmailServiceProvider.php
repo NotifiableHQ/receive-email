@@ -1,10 +1,10 @@
 <?php
 
-namespace Notifiable;
+namespace Notifiable\ReceiveEmail;
 
 use Illuminate\Support\ServiceProvider;
-use Notifiable\Console\Commands\ReceiveEmail;
-use Notifiable\Console\Commands\SetupPostfix;
+use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmail;
+use Notifiable\ReceiveEmail\Console\Commands\SetupPostfix;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
 {

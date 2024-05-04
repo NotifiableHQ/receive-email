@@ -27,18 +27,18 @@
     },
     "autoload": {
         "psr-4": {
-            "Notifiable\\": "src/"
+            "Notifiable\\ReceiveEmail\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Notifiable\\Tests\\": "tests/"
+            "Notifiable\\ReceiveEmail\\Tests\\": "tests/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "Notifiable\\ReceiveEmailServiceProvider"
+                "Notifiable\\ReceiveEmail\\ReceiveEmailServiceProvider"
             ]
         }
     },

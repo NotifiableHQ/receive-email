@@ -1,6 +1,6 @@
 <?php
 
-namespace Notifiable\Console\Commands;
+namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Arr;

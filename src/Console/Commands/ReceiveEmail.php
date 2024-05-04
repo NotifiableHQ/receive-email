@@ -1,14 +1,14 @@
 <?php
 
-namespace Notifiable\Console\Commands;
+namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Notifiable\Contracts\EmailFilter;
-use Notifiable\Events\EmailReceived;
-use Notifiable\Models\ReceivedEmail;
+use Notifiable\ReceiveEmail\Contracts\EmailFilter;
+use Notifiable\ReceiveEmail\Events\EmailReceived;
+use Notifiable\ReceiveEmail\Models\ReceivedEmail;
 use PhpMimeMailParser\Parser;
 use Symfony\Component\Console\Command\Command;
 
