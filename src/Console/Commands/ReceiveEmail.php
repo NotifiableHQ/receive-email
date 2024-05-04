@@ -3,10 +3,13 @@
 namespace Notifiable\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Notifiable\Console\Contracts\EmailFilter;
 use Notifiable\Events\EmailReceived;
 use Notifiable\Models\ReceivedEmail;
+use PhpMimeMailParser\Parser;
 use Symfony\Component\Console\Command\Command;
 
 class ReceiveEmail extends ConsoleCommand
@@ -19,26 +22,32 @@ class ReceiveEmail extends ConsoleCommand
 
     public function handle(): int
     {
-        $stream = fopen('php://stdin', 'r');
+        $emailStream = fopen('php://stdin', 'r');
 
-        if ($stream === false) {
+        if ($emailStream === false) {
             $this->error('Could not open stream.');
 
             return Command::FAILURE;
         }
 
-        $streamedEmail = '';
-        while (! feof($stream)) {
-            $streamedEmail .= fread($stream, 1024);
+        $parser = (new Parser)->setStream($emailStream);
+
+        foreach (Config::array('notifiable.email-filters', []) as $filterClass) {
+            /** @var EmailFilter $filter */
+            $filter = app($filterClass);
+
+            if ($filter->filter($parser)) {
+                // Track filtered mail?
+                return Command::SUCCESS;
+            }
         }
-        fclose($stream);
 
         /** @var ReceivedEmail $receivedEmail */
         $receivedEmail = ReceivedEmail::query()->create([
             'ulid' => (string) Str::ulid(),
         ]);
 
-        Storage::put($receivedEmail->path(), $streamedEmail);
+        Storage::put($receivedEmail->path(), $parser->getStream());
 
         event(new EmailReceived($receivedEmail));
 

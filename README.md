@@ -6,6 +6,9 @@ Let your Laravel app receive emails.
 composer require notifiableapp/receive-email
 ```
 
+## Usage
+`TBD`
+
 ## Forge Deployment
 1. Add this to your recipes, you can name it `Install Mailparse`. Make sure the user is `root`.
 ```bash
@@ -33,7 +36,6 @@ sudo php artisan notifiable:setup-postfix domain-that-receives-email.com
     | Type | Host                           | Value                | Priority |
     |------|--------------------------------|----------------------| --- |
     | MX   | domain-that-receives-email.com | your-application-domain.com | 10 |
-
 
 ## Research References
 - [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)

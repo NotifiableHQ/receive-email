@@ -8,16 +8,25 @@ use Notifiable\Console\Commands\SetupPostfix;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
 {
+    public function register(): void
+    {
+        $this->mergeConfigFrom(__DIR__.'/../config/notifiable.php', 'notifiable');
+    }
+
     public function boot(): void
     {
         if ($this->app->runningInConsole()) {
-            $this->registerMigrationPublishing();
+            $this->registerPublishing();
             $this->registerCommands();
         }
     }
 
-    private function registerMigrationPublishing(): void
+    private function registerPublishing(): void
     {
+        $this->publishes([
+            __DIR__.'/../config/notifiable.php' => config_path('notifiable.php'),
+        ], ['notifiable', 'notifiable-config']);
+
         $method = method_exists($this, 'publishesMigrations') ? 'publishesMigrations' : 'publishes';
 
         $this->{$method}([

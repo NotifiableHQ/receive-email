@@ -88,10 +88,10 @@ class SetupPostfix extends ConsoleCommand
 
         $masterConfig = $this->getConfigPath('master.cf');
 
-        $newContentFilter = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
-        $oldContentFilter = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newContentFilter);
+        $newSmtpDaemon = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
+        $oldSmtpDaemon = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newSmtpDaemon);
 
-        if ($oldContentFilter === null) {
+        if ($oldSmtpDaemon === null) {
             $this->error("'smtp inet' is missing from {$masterConfig}.");
 
             exit(Command::FAILURE);
