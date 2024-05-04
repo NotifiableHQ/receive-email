@@ -3,7 +3,7 @@
 namespace Notifiable\Filters;
 
 use Illuminate\Support\Facades\Config;
-use Notifiable\Console\Contracts\EmailFilter;
+use Notifiable\Contracts\EmailFilter;
 use PhpMimeMailParser\Parser;
 
 class SenderAddressBlacklistFilter implements EmailFilter

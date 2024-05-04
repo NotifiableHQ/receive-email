@@ -6,7 +6,7 @@ use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Notifiable\Console\Contracts\EmailFilter;
+use Notifiable\Contracts\EmailFilter;
 use Notifiable\Events\EmailReceived;
 use Notifiable\Models\ReceivedEmail;
 use PhpMimeMailParser\Parser;
