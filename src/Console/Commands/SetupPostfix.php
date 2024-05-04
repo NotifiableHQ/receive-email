@@ -22,6 +22,7 @@ class SetupPostfix extends ConsoleCommand
 
         $this->warn('THIS SCRIPT WILL MODIFY THE POSTFIX CONFIGURATION FILES!');
 
+        /** @var string $domain */
         $domain = $this->argument('domain');
 
         $this->installPostfix($domain);
