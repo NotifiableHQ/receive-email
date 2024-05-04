@@ -4,14 +4,16 @@ namespace Notifiable\ReceiveEmail\Events;
 
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
-use Notifiable\ReceiveEmail\Models\ReceivedEmail;
 
-class EmailReceived
+class EmailFiltered
 {
     use Dispatchable, SerializesModels;
 
     public function __construct(
-        public ReceivedEmail $email
+        public string $filterClass,
+        public string $messageId,
+        public string $fromAddress,
+        public string $subject,
     ) {
     }
 }

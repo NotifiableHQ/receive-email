@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
+use Notifiable\ReceiveEmail\Events\EmailFiltered;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\ReceivedEmail;
 use PhpMimeMailParser\Parser;
@@ -32,12 +33,19 @@ class ReceiveEmail extends ConsoleCommand
 
         $parser = (new Parser)->setStream($emailStream);
 
+        /** @var string $filterClass */
         foreach (Config::array('notifiable.email-filters', []) as $filterClass) {
             /** @var EmailFilter $filter */
             $filter = app($filterClass);
 
             if ($filter->filter($parser)) {
-                // Track filtered mail?
+                event(new EmailFiltered(
+                    filterClass: $filterClass,
+                    messageId: (string) $parser->getHeader('message-id'),
+                    fromAddress: (string) $parser->getAddresses('from')[0]['address'],
+                    subject: (string) $parser->getHeader('subject')
+                ));
+
                 return Command::SUCCESS;
             }
         }
