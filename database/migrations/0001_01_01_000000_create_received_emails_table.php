@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -11,12 +12,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('received_emails', function (Blueprint $table) {
-            $table->id();
-            $table->string('ulid');
-            $table->timestamp('read_at')->nullable();
+        Schema::create(Config::string('notifiable.model-table'), function (Blueprint $table) {
+            $table->ulid()->primary();
+            $table->string('message_id')->unique();
             $table->timestamps();
-            $table->softDeletes();
         });
     }
 

@@ -2,11 +2,14 @@
 
 namespace Notifiable\ReceiveEmail\Models;
 
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Config;
+use Notifiable\ReceiveEmail\Exceptions\CouldNotDeleteEmail;
 use PhpMimeMailParser\Parser;
+
+use function Notifiable\ReceiveEmail\storage;
 
 /**
  * @property string $ulid
@@ -18,49 +21,41 @@ use PhpMimeMailParser\Parser;
  */
 class ReceivedEmail extends Model
 {
-    use SoftDeletes;
+    use HasUlids;
 
-    protected $fillable = ['ulid'];
+    protected $primaryKey = 'ulid';
+
+    protected $fillable = ['ulid', 'message_id'];
+
+    public function getTable(): string
+    {
+        return Config::string('notifiable.model-table');
+    }
 
     protected static function booted(): void
     {
-        static::forceDeleted(function (self $email) {
+        static::deleted(function (self $email) {
             $email->deleteFile();
         });
     }
 
+    /**
+     * @throws CouldNotDeleteEmail
+     */
     public function deleteFile(): void
     {
-        $file = $this->path();
+        $path = $this->path();
 
-        if (! Storage::delete($file)) {
-            throw new \RuntimeException("Could not delete email: {$file}");
+        if (! storage()->delete($path)) {
+            throw CouldNotDeleteEmail::path($path);
         }
     }
 
     public function parse(): Parser
     {
-        $path = storage_path("app/{$this->path()}");
-        $parser = new Parser();
-        $parser->setPath($path);
-
-        return $parser;
-    }
-
-    public function getIsReadAttribute(): bool
-    {
-        return $this->read_at !== null;
-    }
-
-    public function markAsRead(): self
-    {
-        $this->read_at = now();
-
-        if (! $this->save()) {
-            throw new \RuntimeException('Could not save read_at timestamp.');
-        }
-
-        return $this;
+        return (new Parser())->setPath(
+            storage()->path($this->path())
+        );
     }
 
     public function path(): string
