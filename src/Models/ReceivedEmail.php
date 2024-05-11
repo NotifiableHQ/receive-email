@@ -27,6 +27,8 @@ class ReceivedEmail extends Model
 
     protected $fillable = ['ulid', 'message_id'];
 
+    private Parser $parser;
+
     public function getTable(): string
     {
         return Config::string('notifiable.model-table');
@@ -53,9 +55,13 @@ class ReceivedEmail extends Model
 
     public function parse(): Parser
     {
-        return (new Parser())->setPath(
-            storage()->path($this->path())
-        );
+        if (! isset($this->parser)) {
+            $this->parser = (new Parser())->setPath(
+                storage()->path($this->path())
+            );
+        }
+
+        return $this->parser;
     }
 
     public function path(): string
