@@ -76,7 +76,6 @@ class ReceiveEmail extends Command
     {
         /** @var ReceivedEmail $receivedEmail */
         $receivedEmail = ReceivedEmail::query()->create([
-            'ulid' => (string) Str::ulid(),
             'message_id' => $messageId,
         ]);
 
