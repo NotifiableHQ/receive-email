@@ -12,11 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('received_emails', function (Blueprint $table) {
-            $table->id();
-            $table->string('ulid');
-            $table->timestamp('read_at')->nullable();
+            $table->ulid()->primary();
+            $table->string('message_id')->unique();
             $table->timestamps();
-            $table->softDeletes();
         });
     }
 
