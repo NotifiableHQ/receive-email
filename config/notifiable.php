@@ -69,4 +69,5 @@ return [
     */
 
     'sender-address-blacklist' => [],
+
 ];

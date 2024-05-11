@@ -15,6 +15,8 @@ use Symfony\Component\Console\Command\Command;
 
 class ReceiveEmail extends ConsoleCommand
 {
+    public const EX_NOHOST = 68;
+
     /** @var string */
     protected $signature = 'notifiable:receive-email';
 
@@ -33,6 +35,9 @@ class ReceiveEmail extends ConsoleCommand
 
         $parser = (new Parser)->setStream($emailStream);
 
+        /** @var array<string> $toAddresses */
+        $toAddresses = data_get($parser->getAddresses('to'), '*.address', []);
+
         /** @var string $filterClass */
         foreach (Config::array('notifiable.email-filters', []) as $filterClass) {
             /** @var EmailFilter $filter */
@@ -43,10 +48,11 @@ class ReceiveEmail extends ConsoleCommand
                     filterClass: $filterClass,
                     messageId: (string) $parser->getHeader('message-id'),
                     fromAddress: (string) $parser->getAddresses('from')[0]['address'],
+                    toAddresses: $toAddresses,
                     subject: (string) $parser->getHeader('subject')
                 ));
 
-                return Command::SUCCESS;
+                return self::EX_NOHOST;
             }
         }
 
