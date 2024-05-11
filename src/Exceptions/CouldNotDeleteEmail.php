@@ -8,6 +8,6 @@ class CouldNotDeleteEmail extends Exception
 {
     public static function path(string $path): self
     {
-        return new CouldNotDeleteEmail("Could not delete email: `{$path}`");
+        return new CouldNotDeleteEmail("Could not delete email: {$path}");
     }
 }
