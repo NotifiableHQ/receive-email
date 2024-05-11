@@ -5,6 +5,7 @@ namespace Notifiable\ReceiveEmail\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Exceptions\CouldNotDeleteEmail;
 use PhpMimeMailParser\Parser;
 
@@ -25,6 +26,11 @@ class ReceivedEmail extends Model
     protected $primaryKey = 'ulid';
 
     protected $fillable = ['ulid', 'message_id'];
+
+    public function getTable(): string
+    {
+        return Config::string('notifiable.model-table');
+    }
 
     protected static function booted(): void
     {
