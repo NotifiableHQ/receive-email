@@ -3,7 +3,6 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Str;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
@@ -16,8 +15,6 @@ use function Notifiable\ReceiveEmail\storage;
 
 class ReceiveEmail extends Command
 {
-    use HasUlids;
-
     public const EX_OK = 0;
 
     public const EX_NOINPUT = 66;

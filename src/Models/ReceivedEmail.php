@@ -44,10 +44,10 @@ class ReceivedEmail extends Model
      */
     public function deleteFile(): void
     {
-        $file = $this->path();
+        $path = $this->path();
 
-        if (! storage()->delete($file)) {
-            throw CouldNotDeleteEmail::file($file);
+        if (! storage()->delete($path)) {
+            throw CouldNotDeleteEmail::path($path);
         }
     }
 

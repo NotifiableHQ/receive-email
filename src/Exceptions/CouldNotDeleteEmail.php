@@ -6,8 +6,8 @@ use Exception;
 
 class CouldNotDeleteEmail extends Exception
 {
-    public static function file(string $path): self
+    public static function path(string $path): self
     {
-        return new CouldNotDeleteEmail("Could not delete email file: `{$path}`");
+        return new CouldNotDeleteEmail("Could not delete email: `{$path}`");
     }
 }
