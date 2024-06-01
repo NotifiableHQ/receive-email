@@ -1,5 +1,5 @@
 {
-    "name": "notifiableapp/receive-email",
+    "name": "notifiablehq/receive-email",
     "description": "Let your Laravel app receive emails.",
     "keywords": [
         "laravel",

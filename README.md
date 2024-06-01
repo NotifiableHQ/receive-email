@@ -3,7 +3,7 @@ Let your Laravel app receive emails.
 
 ## Installation
 ```bash
-composer require notifiableapp/receive-email
+composer require notifiablehq/receive-email
 ```
 
 ## Usage
