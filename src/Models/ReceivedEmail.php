@@ -25,7 +25,7 @@ class ReceivedEmail extends Model
 
     protected $primaryKey = 'ulid';
 
-    protected $fillable = ['ulid', 'message_id'];
+    protected $fillable = ['ulid', 'message_id', 'mailbox'];
 
     private Parser $parser;
 
