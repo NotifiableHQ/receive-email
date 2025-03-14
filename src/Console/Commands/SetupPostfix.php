@@ -39,7 +39,7 @@ class SetupPostfix extends ConsoleCommand
 
         $postfixCheck = shell_exec('dpkg -l | grep postfix');
 
-        if (is_string($postfixCheck) && str($postfixCheck)->contains('postfix')) {
+        if (is_string($postfixCheck) && str($postfixCheck)->contains(' postfix ')) {
             $this->line('Postfix is already installed.');
 
             return;
