@@ -15,6 +15,7 @@ use function Notifiable\ReceiveEmail\storage;
  * @property string $ulid
  * @property string $message_id
  * @property string $sender_email
+ * @property string $sender_name
  * @property CarbonImmutable $created_at
  */
 class ReceivedEmail extends Model
