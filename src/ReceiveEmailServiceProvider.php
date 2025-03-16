@@ -27,9 +27,7 @@ class ReceiveEmailServiceProvider extends ServiceProvider
             __DIR__.'/../config/notifiable.php' => config_path('notifiable.php'),
         ], ['notifiable', 'notifiable-config']);
 
-        $method = method_exists($this, 'publishesMigrations') ? 'publishesMigrations' : 'publishes';
-
-        $this->{$method}([
+        $this->publishesMigrations([
             __DIR__.'/../database/migrations' => database_path('migrations'),
         ], ['notifiable', 'notifiable-migrations']);
     }

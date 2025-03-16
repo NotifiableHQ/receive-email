@@ -11,6 +11,5 @@ class EmailFiltered
         public string $fromAddress,
         public array $toAddresses,
         public string $subject,
-    ) {
-    }
+    ) {}
 }

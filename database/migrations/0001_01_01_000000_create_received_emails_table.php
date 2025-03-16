@@ -15,8 +15,8 @@ return new class extends Migration
         Schema::create(Config::string('notifiable.model-table'), function (Blueprint $table) {
             $table->ulid()->primary();
             $table->string('message_id')->unique();
-            $table->string('mailbox');
-            $table->timestamps();
+            $table->string('sender_email')->index();
+            $table->timestamp('created_at');
         });
     }
 

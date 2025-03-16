@@ -11,6 +11,5 @@ class EmailReceived
 
     public function __construct(
         public ReceivedEmail $email
-    ) {
-    }
+    ) {}
 }

@@ -16,12 +16,12 @@
         }
     ],
     "require": {
-        "illuminate/support": "^12.1",
+        "illuminate/support": "^12.2",
         "php-mime-mail-parser/php-mime-mail-parser": "^9.0"
     },
     "require-dev": {
         "laravel/pint": "^1.21",
-        "larastan/larastan": "^3.1",
+        "larastan/larastan": "^3.2",
         "pestphp/pest": "^3.7",
         "orchestra/testbench": "^10.1"
     },

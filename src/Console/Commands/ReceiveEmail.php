@@ -74,13 +74,10 @@ class ReceiveEmail extends Command
 
     private function storeEmail(Parser $parser, string $messageId): void
     {
-        /** @var array<string> $toAddresses */
-        $toAddresses = data_get($parser->getAddresses('to'), '*.address', []);
-
         /** @var ReceivedEmail $receivedEmail */
         $receivedEmail = ReceivedEmail::query()->create([
             'message_id' => $messageId,
-            'mailbox' => $toAddresses[0],
+            'sender_email' => (string) $parser->getAddresses('from')[0]['address'],
         ]);
 
         storage()->put($receivedEmail->path(), $parser->getStream());
