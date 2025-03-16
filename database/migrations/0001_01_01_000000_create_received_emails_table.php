@@ -16,6 +16,7 @@ return new class extends Migration
             $table->ulid()->primary();
             $table->string('message_id')->unique();
             $table->string('sender_email')->index();
+            $table->string('sender_name')->index();
             $table->timestamp('created_at');
         });
     }

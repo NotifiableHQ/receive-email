@@ -93,4 +93,11 @@ class ReceivedEmail extends Model
     {
         return in_array($email, $this->mailboxes());
     }
+
+    public function subject(): string
+    {
+        $subject = $this->parse()->getHeader('Subject');
+
+        return $subject === false ? '' : $subject;
+    }
 }

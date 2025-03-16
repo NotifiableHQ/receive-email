@@ -78,6 +78,7 @@ class ReceiveEmail extends Command
         $receivedEmail = ReceivedEmail::query()->create([
             'message_id' => $messageId,
             'sender_email' => (string) $parser->getAddresses('from')[0]['address'],
+            'sender_name' => (string) $parser->getAddresses('from')[0]['display'],
         ]);
 
         storage()->put($receivedEmail->path(), $parser->getStream());
