@@ -6,7 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Str;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
-use Notifiable\ReceiveEmail\Events\EmailFiltered;
+use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\ReceivedEmail;
 use PhpMimeMailParser\Parser;
@@ -59,16 +59,18 @@ class ReceiveEmail extends Command
             $filter = app($filterClass);
 
             if ($filter->filter($parser)) {
-                event(new EmailFiltered(
-                    filterClass: $filterClass,
-                    messageId: $messageId,
-                    fromAddress: (string) $parser->getAddresses('from')[0]['address'],
-                    toAddresses: $toAddresses,
-                    subject: (string) $parser->getHeader('subject')
-                ));
-
-                exit(self::EX_NOHOST);
+                continue;
             }
+
+            event(new EmailFilteredOut(
+                filterClass: $filterClass,
+                messageId: $messageId,
+                subject: (string) $parser->getHeader('subject'),
+                fromAddress: (string) $parser->getAddresses('from')[0]['address'],
+                toAddresses: $toAddresses,
+            ));
+
+            exit(self::EX_NOHOST);
         }
     }
 
@@ -79,6 +81,7 @@ class ReceiveEmail extends Command
             'message_id' => $messageId,
             'sender_email' => (string) $parser->getAddresses('from')[0]['address'],
             'sender_name' => (string) $parser->getAddresses('from')[0]['display'],
+            'subject' => (string) $parser->getHeader('subject'),
         ]);
 
         storage()->put($receivedEmail->path(), $parser->getStream());

@@ -82,15 +82,27 @@ class ReceivedEmail extends Model
     /**
      * @return string[]
      */
-    public function mailboxes(): array
+    public function mailboxes(bool $includeCc = false, bool $includeBcc = false): array
     {
         /** @var array<string> $addresses */
         $addresses = data_get($this->parse()->getAddresses('to'), '*.address', []);
 
+        if ($includeCc) {
+            /** @var array<string> ccAddresses */
+            $ccAddresses = data_get($this->parse()->getAddresses('cc'), '*.address', []);
+
+            $addresses = array_merge($addresses, $ccAddresses);
+        }
+
+        if ($includeBcc) {
+            /** @var array<string> bccAddresses */
+            $bccAddresses = data_get($this->parse()->getAddresses('bcc'), '*.address', []);
+        }
+
         return $addresses;
     }
 
-    public function sentTo(string $email): bool
+    public function wasSentTo(string $email): bool
     {
         return in_array($email, $this->mailboxes());
     }

@@ -14,6 +14,6 @@ class SenderDomainBlacklistFilter implements EmailFilter
 
         $domain = explode('@', $from)[1];
 
-        return in_array($domain, Config::array('notifiable.sender-domain-blacklist', []));
+        return ! in_array($domain, Config::array('notifiable.sender-domain-blacklist', []));
     }
 }

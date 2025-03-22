@@ -12,6 +12,6 @@ class SenderAddressBlacklistFilter implements EmailFilter
     {
         $from = $email->getAddresses('from')[0]['address'];
 
-        return in_array($from, Config::array('notifiable.sender-address-blacklist', []));
+        return ! in_array($from, Config::array('notifiable.sender-address-blacklist', []));
     }
 }
