@@ -16,6 +16,7 @@ use function Notifiable\ReceiveEmail\storage;
  * @property string $message_id
  * @property string $sender_email
  * @property string $sender_name
+ * @property string $subject
  * @property CarbonImmutable $created_at
  */
 class ReceivedEmail extends Model
@@ -26,7 +27,7 @@ class ReceivedEmail extends Model
 
     protected $primaryKey = 'ulid';
 
-    protected $fillable = ['ulid', 'message_id', 'sender_email', 'sender_name'];
+    protected $guarded = ['ulid', 'created_at'];
 
     private Parser $parser;
 
@@ -104,13 +105,6 @@ class ReceivedEmail extends Model
 
     public function wasSentTo(string $email): bool
     {
-        return in_array($email, $this->mailboxes());
-    }
-
-    public function subject(): string
-    {
-        $subject = $this->parse()->getHeader('Subject');
-
-        return $subject === false ? '' : $subject;
+        return in_array($email, $this->mailboxes(includeCc: true, includeBcc: true));
     }
 }
