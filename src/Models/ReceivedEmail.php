@@ -83,7 +83,7 @@ class ReceivedEmail extends Model
     /**
      * @return string[]
      */
-    public function mailboxes(bool $includeCc = false, bool $includeBcc = false): array
+    public function mailboxes(bool $includeCc = true, bool $includeBcc = true): array
     {
         /** @var array<string> $addresses */
         $addresses = data_get($this->parse()->getAddresses('to'), '*.address', []);
