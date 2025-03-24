@@ -56,10 +56,6 @@
         "review": [
             "@php vendor/bin/pint",
             "@php vendor/bin/phpstan analyse"
-        ],
-        "lint": [
-            "@php vendor/bin/pint --ansi",
-            "@php vendor/bin/phpstan analyse --verbose --ansi"
         ]
     }
 }
