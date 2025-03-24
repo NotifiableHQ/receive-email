@@ -7,7 +7,7 @@ use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
-use Notifiable\ReceiveEmail\Exceptions\MalformedEmailException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use PhpMimeMailParser\Parser;
 
 class ParserParsedMail implements ParsedMail
@@ -72,7 +72,7 @@ class ParserParsedMail implements ParsedMail
         $from = $this->parser->getAddresses('from');
 
         if ($from === []) {
-            throw MalformedEmailException::missingFromAddress();
+            throw MalformedMailException::missingFromAddress();
         }
 
         return $this->from ??= Address::from($from[0]);
@@ -142,7 +142,7 @@ class ParserParsedMail implements ParsedMail
     private function getHeader(string $key): string
     {
         if (($header = $this->parser->getHeader($key)) === false) {
-            throw MalformedEmailException::missingHeader($key);
+            throw MalformedMailException::missingHeader($key);
         }
 
         return $header;

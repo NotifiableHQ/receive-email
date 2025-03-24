@@ -2,7 +2,7 @@
 
 namespace Notifiable\ReceiveEmail\Data;
 
-use Notifiable\ReceiveEmail\Exceptions\MalformedEmailException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 
 readonly class Recipients
 {
@@ -17,7 +17,7 @@ readonly class Recipients
         public array $bcc,
     ) {
         if ($to === [] && $cc === [] && $bcc === []) {
-            throw MalformedEmailException::missingRecipient();
+            throw MalformedMailException::missingRecipient();
         }
     }
 
