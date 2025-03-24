@@ -4,14 +4,14 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Str;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
+use Notifiable\ReceiveEmail\Contracts\ParsedMail;
+use Notifiable\ReceiveEmail\Contracts\PipeCommand;
 use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
-use Notifiable\ReceiveEmail\Events\EmailReceived;
-use Notifiable\ReceiveEmail\Models\ReceivedEmail;
+use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
+use Notifiable\ReceiveEmail\Exceptions\InvalidPipeCommandException;
+use Notifiable\ReceiveEmail\ParserParsedMail;
 use PhpMimeMailParser\Parser;
-
-use function Notifiable\ReceiveEmail\storage;
 
 class ReceiveEmail extends Command
 {
@@ -27,6 +27,15 @@ class ReceiveEmail extends Command
     /** @var string */
     protected $description = 'Receive an email.';
 
+    protected Parser $parser;
+
+    public function __construct()
+    {
+        $this->parser = new Parser;
+
+        parent::__construct();
+    }
+
     public function handle(): int
     {
         $emailStream = fopen('php://stdin', 'r');
@@ -39,53 +48,38 @@ class ReceiveEmail extends Command
 
         $parser = (new Parser)->setStream($emailStream);
 
-        $messageId = Str::remove(['<', '>'], (string) $parser->getHeader('message-id'));
+        $parsedMail = new ParserParsedMail($parser);
 
-        $this->applyFilters($parser, $messageId);
+        $this->applyFilters($parsedMail);
 
-        $this->storeEmail($parser, $messageId);
+        $pipeCommand = app(config('notifiable.pipe-command'));
+
+        if (! ($pipeCommand instanceof PipeCommand)) {
+            throw new InvalidPipeCommandException;
+        }
+
+        $pipeCommand->handle($parsedMail);
 
         return self::EX_OK;
     }
 
-    private function applyFilters(Parser $parser, string $messageId): void
+    private function applyFilters(ParsedMail $parsedMail): void
     {
-        /** @var array<string> $toAddresses */
-        $toAddresses = data_get($parser->getAddresses('to'), '*.address', []);
-
         /** @var string $filterClass */
         foreach (Config::array('notifiable.email-filters', []) as $filterClass) {
-            /** @var EmailFilter $filter */
             $filter = app($filterClass);
 
-            if ($filter->filter($parser)) {
+            if (! ($filter instanceof EmailFilter)) {
+                throw InvalidFilterException::filter($filterClass);
+            }
+
+            if ($filter->filter($parsedMail)) {
                 continue;
             }
 
-            event(new EmailFilteredOut(
-                filterClass: $filterClass,
-                messageId: $messageId,
-                subject: (string) $parser->getHeader('subject'),
-                fromAddress: (string) $parser->getAddresses('from')[0]['address'],
-                toAddresses: $toAddresses,
-            ));
+            event(new EmailFilteredOut($filterClass, $parsedMail->toMail()));
 
             exit(self::EX_NOHOST);
         }
-    }
-
-    private function storeEmail(Parser $parser, string $messageId): void
-    {
-        /** @var ReceivedEmail $receivedEmail */
-        $receivedEmail = ReceivedEmail::query()->create([
-            'message_id' => $messageId,
-            'sender_email' => (string) $parser->getAddresses('from')[0]['address'],
-            'sender_name' => (string) $parser->getAddresses('from')[0]['display'],
-            'subject' => (string) $parser->getHeader('subject'),
-        ]);
-
-        storage()->put($receivedEmail->path(), $parser->getStream());
-
-        event(new EmailReceived($receivedEmail));
     }
 }

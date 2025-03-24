@@ -3,19 +3,19 @@
     "description": "Let your Laravel app receive emails.",
     "keywords": [
         "laravel",
-        "inbound-email",
-        "inbound-emails",
-        "receive-email",
-        "receive-emails"
+        "mailbox",
+        "receive email",
+        "inbound email"
     ],
     "license": "MIT",
     "authors": [
         {
             "name": "Prince John Santillan",
-            "email": "mail@princejohnsantillan.net"
+            "email": "iam@princejohn.dev"
         }
     ],
     "require": {
+        "php": "^8.2",
         "illuminate/support": "^12.2",
         "php-mime-mail-parser/php-mime-mail-parser": "^9.0"
     },
@@ -35,7 +35,10 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Notifiable\\ReceiveEmail\\Tests\\": "tests/"
+            "Notifiable\\ReceiveEmail\\Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
         }
     },
     "extra": {
@@ -56,6 +59,22 @@
         "review": [
             "@php vendor/bin/pint",
             "@php vendor/bin/phpstan analyse"
+        ],
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "prepare": "@php vendor/bin/testbench package:discover --ansi",
+        "build": "@php vendor/bin/testbench workbench:build --ansi",
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@build",
+            "@php vendor/bin/testbench serve --ansi"
+        ],
+        "lint": [
+            "@php vendor/bin/pint --ansi",
+            "@php vendor/bin/phpstan analyse --verbose --ansi"
         ]
     }
 }

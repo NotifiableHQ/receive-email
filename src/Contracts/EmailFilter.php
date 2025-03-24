@@ -2,9 +2,11 @@
 
 namespace Notifiable\ReceiveEmail\Contracts;
 
-use PhpMimeMailParser\Parser;
-
 interface EmailFilter
 {
-    public function filter(Parser $email): bool;
+    /**
+     * Return TRUE for emails you want to accept.
+     * Return FALSE for emails you want to reject.
+     */
+    public function filter(ParsedMail $parsedMail): bool;
 }

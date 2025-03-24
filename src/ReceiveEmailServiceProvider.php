@@ -5,9 +5,14 @@ namespace Notifiable\ReceiveEmail;
 use Illuminate\Support\ServiceProvider;
 use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmail;
 use Notifiable\ReceiveEmail\Console\Commands\SetupPostfix;
+use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
 {
+    public $singletons = [
+        ParsedMail::class => ParserParsedMail::class,
+    ];
+
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/notifiable.php', 'notifiable');

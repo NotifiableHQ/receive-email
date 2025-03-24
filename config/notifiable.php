@@ -13,14 +13,35 @@ return [
     'storage-disk' => 'local',
 
     /*
-    |--------------------------------------------------------------------------
-    | Received Email Model Table
+    |--------------------------------------------
+    ------------------------------
+    | Email Model Table
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the table name for the ReceivedEmail model.
+    | Here you may specify the table name for the Email model.
     |
     */
-    'model-table' => 'received_emails',
+    'email-table' => 'emails',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sender Model Table
+    |--------------------------------------------------------------------------
+    |
+    | Here you may specify the table name for the Sender model.
+    |
+    */
+    'sender-table' => 'senders',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pipe Command Class
+    |--------------------------------------------------------------------------
+    |
+    | Here you may specify the table name for the Sender model.
+    |
+    */
+    'pipe-command' => \Notifiable\ReceiveEmail\StoreAndDispatch::class,
 
     /*
     |--------------------------------------------------------------------------
