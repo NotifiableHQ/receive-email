@@ -4,14 +4,12 @@ namespace Notifiable\ReceiveEmail\Filters;
 
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 
 class SenderAddressWhitelistFilter implements EmailFilter
 {
-    public function filter(Parser $email): bool
+    public function filter(ParsedMail $parsedMail): bool
     {
-        $from = $email->getAddresses('from')[0]['address'];
-
-        return in_array($from, Config::array('notifiable.sender-address-whitelist', []));
+        return in_array($parsedMail->from()->address, Config::array('notifiable.sender-address-whitelist', []));
     }
 }

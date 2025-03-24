@@ -27,15 +27,6 @@ class ReceiveEmail extends Command
     /** @var string */
     protected $description = 'Receive an email.';
 
-    protected Parser $parser;
-
-    public function __construct()
-    {
-        $this->parser = new Parser;
-
-        parent::__construct();
-    }
-
     public function handle(): int
     {
         $emailStream = fopen('php://stdin', 'r');

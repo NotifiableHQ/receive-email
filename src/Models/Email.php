@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
-use Notifiable\ReceiveEmail\Exceptions\CouldNotDeleteEmail;
+use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
 use PhpMimeMailParser\Parser;
 
 use function Notifiable\ReceiveEmail\storage;
@@ -54,14 +54,14 @@ class Email extends Model
     }
 
     /**
-     * @throws CouldNotDeleteEmail
+     * @throws FailedToDeleteException
      */
     public function deleteFile(): void
     {
         $path = $this->path();
 
         if (! storage()->delete($path)) {
-            throw CouldNotDeleteEmail::path($path);
+            throw FailedToDeleteException::path($path);
         }
     }
 

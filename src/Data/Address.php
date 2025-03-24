@@ -7,7 +7,9 @@ readonly class Address
     public function __construct(
         public string $address,
         public string $display
-    ) {}
+    ) {
+        // Add address validation?
+    }
 
     public static function from(array $data): self
     {
@@ -29,5 +31,10 @@ readonly class Address
         }
 
         return $addresses;
+    }
+
+    public function domain(): string
+    {
+        return explode('@', $this->address)[1];
     }
 }
