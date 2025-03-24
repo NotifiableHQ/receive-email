@@ -9,6 +9,9 @@ use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
 {
+    /**
+     * @var array<class-string,class-string>
+     */
     public $singletons = [
         ParsedMail::class => ParserParsedMail::class,
     ];

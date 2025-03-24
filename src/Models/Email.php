@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
+use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
 use PhpMimeMailParser\Parser;
 
@@ -82,6 +83,11 @@ class Email extends Model
         return $this->parser;
     }
 
+    public function parsedMail(): ParsedMail
+    {
+        return \Notifiable\ReceiveEmail\Facades\ParsedMail::parser($this->parse());
+    }
+
     public function path(): string
     {
         $date = $this->created_at->format('Ymd');
@@ -95,18 +101,20 @@ class Email extends Model
     public function mailboxes(bool $includeCc = true, bool $includeBcc = true): array
     {
         /** @var array<string> $addresses */
-        $addresses = data_get($this->parse()->getAddresses('to'), '*.address', []);
+        $addresses = $this->parsedMail()->recipients()->toAddresses();
 
         if ($includeCc) {
             /** @var array<string> ccAddresses */
-            $ccAddresses = data_get($this->parse()->getAddresses('cc'), '*.address', []);
+            $ccAddresses = $this->parsedMail()->recipients()->ccAddresses();
 
             $addresses = array_merge($addresses, $ccAddresses);
         }
 
         if ($includeBcc) {
             /** @var array<string> bccAddresses */
-            $bccAddresses = data_get($this->parse()->getAddresses('bcc'), '*.address', []);
+            $bccAddresses = $this->parsedMail()->recipients()->bccAddresses();
+
+            $addresses = array_merge($addresses, $bccAddresses);
         }
 
         return $addresses;
@@ -114,6 +122,6 @@ class Email extends Model
 
     public function wasSentTo(string $email): bool
     {
-        return in_array($email, $this->mailboxes(includeCc: true, includeBcc: true));
+        return in_array($email, $this->mailboxes());
     }
 }

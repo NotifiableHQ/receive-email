@@ -26,7 +26,7 @@ class StoreAndDispatch implements PipeCommand
                 'sent_at' => $parsedMail->date(),
             ]);
 
-            storage()->put($email->path(), $parsedMail->parser()->getStream());
+            storage()->put($email->path(), $parsedMail->getParser()->getStream());
 
             event(new EmailReceived($email));
         });

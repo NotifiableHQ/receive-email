@@ -19,19 +19,19 @@ class ParserParsedMail implements ParsedMail
     private Address $from;
 
     /**
-     * @var Address[]|null
+     * @var Address[]
      */
-    private ?array $to;
+    private array $to;
 
     /**
-     * @var Address[]|null
+     * @var Address[]
      */
-    private ?array $cc;
+    private array $cc;
 
     /**
-     * @var Address[]|null
+     * @var Address[]
      */
-    private ?array $bcc;
+    private array $bcc;
 
     private Recipients $recipients;
 
@@ -45,7 +45,14 @@ class ParserParsedMail implements ParsedMail
         protected Parser $parser,
     ) {}
 
-    public function parser(): Parser
+    public function parser(Parser $parser): ParsedMail
+    {
+        $this->parser = $parser;
+
+        return $this;
+    }
+
+    public function getParser(): Parser
     {
         return $this->parser;
     }
@@ -62,13 +69,13 @@ class ParserParsedMail implements ParsedMail
 
     public function from(): Address
     {
-        $from = $this->parser->getAddresses('from')[0];
+        $from = $this->parser->getAddresses('from');
 
         if ($from === []) {
             throw MalformedEmailException::missingFromAddress();
         }
 
-        return $this->from ??= Address::from($this->parser->getAddresses('from')[0]);
+        return $this->from ??= Address::from($from[0]);
     }
 
     public function subject(): ?string
@@ -81,29 +88,23 @@ class ParserParsedMail implements ParsedMail
      */
     public function to(): array
     {
-        $to = $this->parser->getAddresses('to');
-
-        return $this->to ??= ($to === [] ? null : Address::fromMany($to));
+        return $this->to ??= Address::fromMany($this->parser->getAddresses('to'));
     }
 
     /**
      * @return Address[]
      */
-    public function cc(): ?array
+    public function cc(): array
     {
-        $cc = $this->parser->getAddresses('cc');
-
-        return $this->cc ??= ($cc === [] ? null : Address::fromMany($cc));
+        return $this->cc ??= Address::fromMany($this->parser->getAddresses('cc'));
     }
 
     /**
      * @return Address[]
      */
-    public function bcc(): ?array
+    public function bcc(): array
     {
-        $bcc = $this->parser->getAddresses('bcc');
-
-        return $this->bcc ??= ($bcc === [] ? null : Address::fromMany($bcc));
+        return $this->bcc ??= Address::fromMany($this->parser->getAddresses('bcc'));
     }
 
     public function recipients(): Recipients

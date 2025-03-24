@@ -10,7 +10,9 @@ use PhpMimeMailParser\Parser;
 
 interface ParsedMail
 {
-    public function parser(): Parser;
+    public function parser(Parser $parser): ParsedMail;
+
+    public function getParser(): Parser;
 
     public function id(): string;
 
@@ -18,10 +20,19 @@ interface ParsedMail
 
     public function from(): Address;
 
+    /**
+     * @return Address[]
+     */
     public function to(): ?array;
 
+    /**
+     * @return Address[]
+     */
     public function cc(): ?array;
 
+    /**
+     * @return Address[]
+     */
     public function bcc(): ?array;
 
     public function recipients(): Recipients;

@@ -11,8 +11,14 @@ use PhpMimeMailParser\Parser;
 
 class FakeParsedMail implements ParsedMail
 {
+    /**
+     * @var array<string, mixed>
+     */
     private array $fakeData;
 
+    /**
+     * @param  array<string, mixed>  $data
+     */
     public function fake(array $data): self
     {
         $this->fakeData = $data;
@@ -20,7 +26,12 @@ class FakeParsedMail implements ParsedMail
         return $this;
     }
 
-    public function parser(): Parser
+    public function parser(Parser $parser): ParsedMail
+    {
+        return $this;
+    }
+
+    public function getParser(): Parser
     {
         return new Parser;
     }
@@ -48,12 +59,15 @@ class FakeParsedMail implements ParsedMail
             : Address::from($from);
     }
 
-    public function to(): ?array
+    /**
+     * @return Address[]
+     */
+    public function to(): array
     {
         $to = $this->fakeData['to'];
 
         if ($to === []) {
-            return null;
+            return [];
         }
 
         return $to[0] instanceof Address
@@ -61,12 +75,15 @@ class FakeParsedMail implements ParsedMail
             : Address::fromMany($to);
     }
 
-    public function cc(): ?array
+    /**
+     * @return Address[]
+     */
+    public function cc(): array
     {
         $cc = $this->fakeData['cc'];
 
         if ($cc === []) {
-            return null;
+            return [];
         }
 
         return $cc[0] instanceof Address
@@ -74,12 +91,15 @@ class FakeParsedMail implements ParsedMail
             : Address::fromMany($cc);
     }
 
-    public function bcc(): ?array
+    /**
+     * @return Address[]
+     */
+    public function bcc(): array
     {
         $bcc = $this->fakeData['bcc'];
 
         if ($bcc === []) {
-            return null;
+            return [];
         }
 
         return $bcc[0] instanceof Address

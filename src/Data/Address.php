@@ -11,6 +11,9 @@ readonly class Address
         // Add address validation?
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     */
     public static function from(array $data): self
     {
         return new self(
@@ -20,6 +23,7 @@ readonly class Address
     }
 
     /**
+     * @param  array<mixed>  $data
      * @return Address[]
      */
     public static function fromMany(array $data): array

@@ -15,6 +15,9 @@ class ParsedMail extends Facade
         return static::class;
     }
 
+    /**
+     * @param  array<mixed>  $data
+     */
     public static function fake(array $data = []): FakeParsedMail
     {
         $fakeParsedMail = (new FakeParsedMail)->fake($data);
