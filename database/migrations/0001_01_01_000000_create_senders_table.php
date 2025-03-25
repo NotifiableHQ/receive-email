@@ -14,8 +14,8 @@ return new class extends Migration
     {
         Schema::create(Config::string('receive_email.sender-table'), function (Blueprint $table) {
             $table->ulid()->primary();
-            $table->string('email')->index();
-            $table->string('name')->index();
+            $table->string('address')->index();
+            $table->string('display')->index();
             $table->timestamps();
         });
     }

@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\Config;
 
 /**
  * @property string $ulid
- * @property string $email
- * @property Sender $name
+ * @property string $address
+ * @property Sender $display
  * @property-read Collection<int, Email> $emails
  * @property CarbonImmutable $updated_at
  * @property CarbonImmutable $created_at
