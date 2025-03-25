@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Config;
 /**
  * @property string $ulid
  * @property string $address
- * @property Sender $display
+ * @property string $display
  * @property-read Collection<int, Email> $emails
  * @property CarbonImmutable $updated_at
  * @property CarbonImmutable $created_at
