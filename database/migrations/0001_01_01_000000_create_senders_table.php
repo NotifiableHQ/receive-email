@@ -12,7 +12,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create(Config::string('notifiable.sender-table'), function (Blueprint $table) {
+        Schema::create(Config::string('receive_email.sender-table'), function (Blueprint $table) {
             $table->ulid()->primary();
             $table->string('email')->index();
             $table->string('name')->index();

@@ -10,6 +10,6 @@ class SenderAddressWhitelistFilter implements EmailFilter
 {
     public function filter(ParsedMail $parsedMail): bool
     {
-        return in_array($parsedMail->from()->address, Config::array('notifiable.sender-address-whitelist', []));
+        return in_array($parsedMail->from()->address, Config::array('receive_email.sender-address-whitelist', []));
     }
 }

@@ -13,7 +13,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create(Config::string('notifiable.email-table'), function (Blueprint $table) {
+        Schema::create(Config::string('receive_email.email-table'), function (Blueprint $table) {
             $table->ulid()->primary();
             $table->string('message_id')->unique();
             $table->foreignIdFor(Sender::class)->constrained()->cascadeOnDelete()->cascadeOnUpdate();
@@ -27,6 +27,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists(Config::string('notifiable.email-table'));
+        Schema::dropIfExists(Config::string('receive_email.email-table'));
     }
 };

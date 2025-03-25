@@ -38,7 +38,7 @@ class Email extends Model
 
     public function getTable(): string
     {
-        return Config::string('notifiable.email-table');
+        return Config::string('receive_email.email-table');
     }
 
     protected static function booted(): void

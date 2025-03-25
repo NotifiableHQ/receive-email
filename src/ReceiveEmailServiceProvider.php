@@ -18,7 +18,7 @@ class ReceiveEmailServiceProvider extends ServiceProvider
 
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../config/notifiable.php', 'notifiable');
+        $this->mergeConfigFrom(__DIR__.'/../config/receive_email.php', 'receive_email');
     }
 
     public function boot(): void
@@ -32,12 +32,12 @@ class ReceiveEmailServiceProvider extends ServiceProvider
     private function registerPublishing(): void
     {
         $this->publishes([
-            __DIR__.'/../config/notifiable.php' => config_path('notifiable.php'),
-        ], ['notifiable', 'notifiable-config']);
+            __DIR__.'/../config/receive_email.php' => config_path('receive_email.php'),
+        ], ['receive-email', 'receive-email-config']);
 
         $this->publishesMigrations([
             __DIR__.'/../database/migrations' => database_path('migrations'),
-        ], ['notifiable', 'notifiable-migrations']);
+        ], ['receive-email', 'receive-email-migrations']);
     }
 
     private function registerCommands(): void

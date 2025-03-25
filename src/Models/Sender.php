@@ -22,7 +22,7 @@ class Sender extends Model
 
     public function getTable(): string
     {
-        return Config::string('notifiable.sender-table');
+        return Config::string('receive_email.sender-table');
     }
 
     /** @return HasMany<Email, $this> */

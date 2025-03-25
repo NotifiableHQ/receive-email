@@ -43,7 +43,7 @@ class ReceiveEmail extends Command
 
         $this->applyFilters($parsedMail);
 
-        $pipeCommand = app(config('notifiable.pipe-command'));
+        $pipeCommand = app(config('receive_email.pipe-command'));
 
         if (! ($pipeCommand instanceof PipeCommand)) {
             throw new InvalidPipeCommandException;
@@ -57,7 +57,7 @@ class ReceiveEmail extends Command
     private function applyFilters(ParsedMail $parsedMail): void
     {
         /** @var string $filterClass */
-        foreach (Config::array('notifiable.email-filters', []) as $filterClass) {
+        foreach (Config::array('receive_email.email-filters', []) as $filterClass) {
             $filter = app($filterClass);
 
             if (! ($filter instanceof EmailFilter)) {

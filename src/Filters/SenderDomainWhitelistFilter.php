@@ -10,6 +10,6 @@ class SenderDomainWhitelistFilter implements EmailFilter
 {
     public function filter(ParsedMail $parsedMail): bool
     {
-        return in_array($parsedMail->from()->domain(), Config::array('notifiable.sender-domain-whitelist', []));
+        return in_array($parsedMail->from()->domain(), Config::array('receive_email.sender-domain-whitelist', []));
     }
 }
