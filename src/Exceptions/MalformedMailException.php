@@ -11,9 +11,9 @@ class MalformedMailException extends Exception
         return new MalformedMailException("[{$key}] header is missing.");
     }
 
-    public static function missingFromAddress(): MalformedMailException
+    public static function missingSender(): MalformedMailException
     {
-        return new MalformedMailException('Missing from email address.');
+        return new MalformedMailException('Missing sender email address.');
     }
 
     public static function missingRecipient(): MalformedMailException

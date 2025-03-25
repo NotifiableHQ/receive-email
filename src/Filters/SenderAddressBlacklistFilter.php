@@ -10,6 +10,6 @@ class SenderAddressBlacklistFilter implements EmailFilter
 {
     public function filter(ParsedMail $parsedMail): bool
     {
-        return ! in_array($parsedMail->from()->address, Config::array('receive_email.sender-address-blacklist', []));
+        return ! in_array($parsedMail->sender()->address, Config::array('receive_email.sender-address-blacklist', []));
     }
 }

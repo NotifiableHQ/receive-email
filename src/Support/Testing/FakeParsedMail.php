@@ -50,13 +50,13 @@ class FakeParsedMail implements ParsedMail
             : $date;
     }
 
-    public function from(): Address
+    public function sender(): Address
     {
-        $from = $this->fakeData['from'];
+        $sender = $this->fakeData['sender'] ?? $this->fakeData['from'];
 
-        return $from instanceof Address
-            ? $from
-            : Address::from($from);
+        return $sender instanceof Address
+            ? $sender
+            : Address::from($sender);
     }
 
     /**
@@ -140,7 +140,7 @@ class FakeParsedMail implements ParsedMail
             : new Mail(
                 $this->id(),
                 $this->date(),
-                $this->from(),
+                $this->sender(),
                 $this->recipients(),
                 $this->subject(),
                 $this->text(),

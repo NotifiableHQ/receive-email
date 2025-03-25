@@ -2,13 +2,17 @@
 
 namespace Notifiable\ReceiveEmail\Data;
 
+use InvalidArgumentException;
+
 readonly class Address
 {
     public function __construct(
         public string $address,
         public string $display
     ) {
-        // Add address validation?
+        if (! filter_var($address, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("Invalid email address: {$address}");
+        }
     }
 
     /**

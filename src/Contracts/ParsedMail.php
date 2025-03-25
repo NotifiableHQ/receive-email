@@ -18,7 +18,7 @@ interface ParsedMail
 
     public function date(): CarbonImmutable;
 
-    public function from(): Address;
+    public function sender(): Address;
 
     /**
      * @return Address[]

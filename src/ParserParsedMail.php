@@ -16,7 +16,7 @@ class ParserParsedMail implements ParsedMail
 
     private CarbonImmutable $date;
 
-    private Address $from;
+    private Address $sender;
 
     /**
      * @var Address[]
@@ -67,15 +67,20 @@ class ParserParsedMail implements ParsedMail
         return $this->date ??= CarbonImmutable::parse($this->getHeader('date'))->utc();
     }
 
-    public function from(): Address
+    public function sender(): Address
     {
-        $from = $this->parser->getAddresses('from');
+        // If sender is present then that is the original sender
+        $sender = $this->parser->getAddresses('sender');
 
-        if ($from === []) {
-            throw MalformedMailException::missingFromAddress();
+        if ($sender === []) {
+            $sender = $this->parser->getAddresses('from');
         }
 
-        return $this->from ??= Address::from($from[0]);
+        if ($sender === []) {
+            throw MalformedMailException::missingSender();
+        }
+
+        return $this->sender ??= Address::from($sender[0]);
     }
 
     public function subject(): ?string
@@ -131,7 +136,7 @@ class ParserParsedMail implements ParsedMail
         return new Mail(
             $this->id(),
             $this->date(),
-            $this->from(),
+            $this->sender(),
             $this->recipients(),
             $this->subject(),
             $this->text(),

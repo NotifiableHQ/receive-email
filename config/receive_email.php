@@ -7,14 +7,14 @@ return [
     | Storage Disk
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the disk that should be used to store incoming emails.
+    | Here you may specify the disk that should be used
+    | to store incoming emails from Postfix pipe.
     |
     */
     'storage-disk' => 'local',
 
     /*
-    |--------------------------------------------
-    ------------------------------
+    |--------------------------------------------------------------------------
     | Email Model Table
     |--------------------------------------------------------------------------
     |
@@ -38,7 +38,8 @@ return [
     | Pipe Command Class
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the table name for the Sender model.
+    | When Postfix receives an email this pipe command is executed, given
+    | the parsed mail. Here you may customize the processing.
     |
     */
     'pipe-command' => \Notifiable\ReceiveEmail\StoreAndDispatch::class,
@@ -66,8 +67,9 @@ return [
     | Sender Domain Whitelist
     |--------------------------------------------------------------------------
     |
-    | Here you may specify a list of domains that are allowed to send emails.
-    | If the sender's domain is not in this list, the email will be rejected.
+    | Here you may specify a list of domains that the mail server will allow
+    | receiving emails from. If the sender's domain is in the list,
+    | the email will be accepted.
     |
     */
 
@@ -78,9 +80,9 @@ return [
     | Sender Address Whitelist
     |--------------------------------------------------------------------------
     |
-    | Here you may specify a list of email addresses that are allowed to send
-    | emails. If the sender's email address is not in this list, the email
-    | will be rejected.
+    | Here you may specify a list of email addresses that the mail server will
+    | allow receiving emails from. If the sender's email address is in
+    | the list, the email will be accepted.
     |
     */
 
@@ -91,8 +93,9 @@ return [
     | Sender Domain Blacklist
     |--------------------------------------------------------------------------
     |
-    | Here you may specify a list of domains that are not allowed to send emails.
-    | If the sender's domain is in this list, the email will be rejected.
+    | Here you may specify a list of domains that the mail server will not
+    | allow receiving emails from. If the sender's domain is in
+    | the list, the email will be rejected.
     |
     */
 
@@ -103,9 +106,9 @@ return [
     | Sender Address Blacklist
     |--------------------------------------------------------------------------
     |
-    | Here you may specify a list of email addresses that are not allowed to send
-    | emails. If the sender's email address is in this list, the email will be
-    | rejected.
+    | Here you may specify a list of email addresses that the mail server will
+    | not allow receiving emails from. If the sender's email address is
+    | in the list, the email will be rejected.
     |
     */
 

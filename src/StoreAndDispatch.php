@@ -16,8 +16,8 @@ class StoreAndDispatch implements PipeCommand
         DB::transaction(function () use ($parsedMail) {
             /** @var Sender $sender */
             $sender = Sender::query()->updateOrCreate(
-                ['email' => $parsedMail->from()->address],
-                ['name' => $parsedMail->from()->display],
+                ['email' => $parsedMail->sender()->address],
+                ['name' => $parsedMail->sender()->display],
             );
 
             /** @var Email $email */
