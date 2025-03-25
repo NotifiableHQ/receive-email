@@ -16,6 +16,8 @@ use function Notifiable\ReceiveEmail\storage;
 /**
  * @property string $ulid
  * @property string $message_id
+ * @property-read  Sender $sender
+ * @property CarbonImmutable $sent_at
  * @property CarbonImmutable $created_at
  */
 class Email extends Model
@@ -31,6 +33,7 @@ class Email extends Model
     protected $with = ['sender'];
 
     protected $casts = [
+        'sent_at' => 'immutable_datetime',
         'created_at' => 'immutable_datetime',
     ];
 

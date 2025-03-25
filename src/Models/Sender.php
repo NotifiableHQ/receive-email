@@ -2,11 +2,21 @@
 
 namespace Notifiable\ReceiveEmail\Models;
 
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Config;
 
+/**
+ * @property string $ulid
+ * @property string $email
+ * @property Sender $name
+ * @property-read Collection<int, Email> $emails
+ * @property CarbonImmutable $updated_at
+ * @property CarbonImmutable $created_at
+ */
 class Sender extends Model
 {
     use HasUlids;
