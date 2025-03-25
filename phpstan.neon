@@ -3,6 +3,8 @@ includes:
 
 parameters:
     paths:
+        - config/
+        - database/
         - src/
 
-    level: 9
+    level: 8

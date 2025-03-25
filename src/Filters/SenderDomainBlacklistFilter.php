@@ -4,16 +4,12 @@ namespace Notifiable\ReceiveEmail\Filters;
 
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\EmailFilter;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 
 class SenderDomainBlacklistFilter implements EmailFilter
 {
-    public function filter(Parser $email): bool
+    public function filter(ParsedMail $parsedMail): bool
     {
-        $from = $email->getAddresses('from')[0]['address'];
-
-        $domain = explode('@', $from)[1];
-
-        return ! in_array($domain, Config::array('notifiable.sender-domain-blacklist', []));
+        return ! in_array($parsedMail->sender()->domain(), Config::array('receive_email.sender-domain-blacklist', []));
     }
 }

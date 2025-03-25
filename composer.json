@@ -3,19 +3,19 @@
     "description": "Let your Laravel app receive emails.",
     "keywords": [
         "laravel",
-        "inbound-email",
-        "inbound-emails",
-        "receive-email",
-        "receive-emails"
+        "mailbox",
+        "receive email",
+        "inbound email"
     ],
     "license": "MIT",
     "authors": [
         {
             "name": "Prince John Santillan",
-            "email": "mail@princejohnsantillan.net"
+            "email": "iam@princejohn.dev"
         }
     ],
     "require": {
+        "php": "^8.2",
         "illuminate/support": "^12.2",
         "php-mime-mail-parser/php-mime-mail-parser": "^9.0"
     },
