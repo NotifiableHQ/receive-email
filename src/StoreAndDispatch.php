@@ -2,6 +2,7 @@
 
 namespace Notifiable\ReceiveEmail;
 
+use Exception;
 use Illuminate\Support\Facades\DB;
 use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 use Notifiable\ReceiveEmail\Contracts\PipeCommand;
@@ -13,7 +14,9 @@ class StoreAndDispatch implements PipeCommand
 {
     public function handle(ParsedMail $parsedMail): void
     {
-        DB::transaction(function () use ($parsedMail) {
+        DB::beginTransaction();
+
+        try {
             /** @var Sender $sender */
             $sender = Sender::query()->updateOrCreate(
                 ['address' => $parsedMail->sender()->address],
@@ -28,7 +31,13 @@ class StoreAndDispatch implements PipeCommand
 
             storage()->put($email->path(), $parsedMail->getParser()->getStream());
 
-            event(new EmailReceived($email));
-        });
+            DB::commit();
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            throw $e;
+        }
+
+        event(new EmailReceived($email));
     }
 }
