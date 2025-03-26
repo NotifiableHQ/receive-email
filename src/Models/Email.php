@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\ParsedMail;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
+use Notifiable\ReceiveEmail\ParserParsedMail;
 use PhpMimeMailParser\Parser;
 
 use function Notifiable\ReceiveEmail\storage;
@@ -88,7 +89,7 @@ class Email extends Model
 
     public function parsedMail(): ParsedMail
     {
-        return \Notifiable\ReceiveEmail\Facades\ParsedMail::parser($this->parse());
+        return new ParserParsedMail($this->parse());
     }
 
     public function path(): string
