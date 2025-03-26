@@ -11,6 +11,7 @@ return [
     | to store incoming emails from Postfix pipe.
     |
     */
+
     'storage-disk' => 'local',
 
     /*
@@ -21,6 +22,7 @@ return [
     | Here you may specify the table name for the Email model.
     |
     */
+
     'email-table' => 'emails',
 
     /*
@@ -31,6 +33,7 @@ return [
     | Here you may specify the table name for the Sender model.
     |
     */
+
     'sender-table' => 'senders',
 
     /*
@@ -42,6 +45,7 @@ return [
     | the parsed mail. Here you may customize the processing.
     |
     */
+
     'pipe-command' => \Notifiable\ReceiveEmail\StoreAndDispatch::class,
 
     /*
@@ -56,10 +60,10 @@ return [
     */
 
     'email-filters' => [
-        // \Notifiable\Filters\SenderDomainWhitelistFilter::class,
-        // \Notifiable\Filters\SenderAddressWhitelistFilter::class,
-        // \Notifiable\Filters\SenderDomainBlacklistFilter::class,
-        // \Notifiable\Filters\SenderAddressBlacklistFilter::class,
+        // \Notifiable\ReceiveEmail\Filters\SenderDomainWhitelistFilter::class,
+        // \Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter::class,
+        // \Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter::class,
+        // \Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter::class,
     ],
 
     /*
@@ -77,19 +81,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Sender Address Whitelist
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify a list of email addresses that the mail server will
-    | allow receiving emails from. If the sender's email address is in
-    | the list, the email will be accepted.
-    |
-    */
-
-    'sender-address-whitelist' => [],
-
-    /*
-    |--------------------------------------------------------------------------
     | Sender Domain Blacklist
     |--------------------------------------------------------------------------
     |
@@ -100,6 +91,19 @@ return [
     */
 
     'sender-domain-blacklist' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sender Address Whitelist
+    |--------------------------------------------------------------------------
+    |
+    | Here you may specify a list of email addresses that the mail server will
+    | allow receiving emails from. If the sender's email address is in
+    | the list, the email will be accepted.
+    |
+    */
+
+    'sender-address-whitelist' => [],
 
     /*
     |--------------------------------------------------------------------------
