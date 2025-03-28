@@ -77,7 +77,7 @@ class Email extends Model
 
     public function parsedMail(): ParsedMailContract
     {
-        return ParsedMail::source($this->path(), Source::Path);
+        return ParsedMail::source(storage()->path($this->path()), Source::Path);
     }
 
     /**

@@ -118,17 +118,17 @@ class FakeParsedMail implements ParsedMailContract
 
     public function subject(): ?string
     {
-        return $this->fakeData['subject'];
+        return $this->fakeData['subject'] ?? null;
     }
 
     public function text(): ?string
     {
-        return $this->fakeData['text'];
+        return $this->fakeData['text'] ?? null;
     }
 
     public function html(): ?string
     {
-        return $this->fakeData['html'];
+        return $this->fakeData['html'] ?? null;
     }
 
     public function toMail(): Mail
