@@ -3,13 +3,18 @@
 namespace Notifiable\ReceiveEmail\Filters;
 
 use Illuminate\Support\Facades\Config;
-use Notifiable\ReceiveEmail\Contracts\EmailFilter;
-use Notifiable\ReceiveEmail\Contracts\ParsedMail;
+use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 
-class SenderDomainWhitelistFilter implements EmailFilter
+class SenderDomainWhitelistFilter implements EmailFilterContract
 {
-    public function filter(ParsedMail $parsedMail): bool
+    public function filter(ParsedMailContract $parsedMail): bool
     {
-        return in_array($parsedMail->sender()->domain(), Config::array('receive_email.sender-domain-whitelist', []));
+        return in_array(
+            mb_strtolower($parsedMail->sender()->domain()),
+            array_map('mb_strtolower',
+                Config::array('receive_email.sender-domain-whitelist', [])
+            )
+        );
     }
 }

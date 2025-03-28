@@ -4,16 +4,15 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
-use Notifiable\ReceiveEmail\Contracts\EmailFilter;
-use Notifiable\ReceiveEmail\Contracts\ParsedMail;
-use Notifiable\ReceiveEmail\Contracts\PipeCommand;
+use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
+use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
 use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeCommandException;
-use Notifiable\ReceiveEmail\ParserParsedMail;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
-class ReceiveEmail extends Command
+class ReceiveEmailCommand extends Command
 {
     public const EX_OK = 0;
 
@@ -37,15 +36,13 @@ class ReceiveEmail extends Command
             return self::EX_NOINPUT;
         }
 
-        $parser = (new Parser)->setStream($emailStream);
-
-        $parsedMail = new ParserParsedMail($parser);
+        $parsedMail = ParsedMail::source($emailStream);
 
         $this->applyFilters($parsedMail);
 
         $pipeCommand = app(config('receive_email.pipe-command'));
 
-        if (! ($pipeCommand instanceof PipeCommand)) {
+        if (! ($pipeCommand instanceof PipeCommandContract)) {
             throw new InvalidPipeCommandException;
         }
 
@@ -54,13 +51,13 @@ class ReceiveEmail extends Command
         return self::EX_OK;
     }
 
-    private function applyFilters(ParsedMail $parsedMail): void
+    private function applyFilters(ParsedMailContract $parsedMail): void
     {
         /** @var string $filterClass */
         foreach (Config::array('receive_email.email-filters', []) as $filterClass) {
             $filter = app($filterClass);
 
-            if (! ($filter instanceof EmailFilter)) {
+            if (! ($filter instanceof EmailFilterContract)) {
                 throw InvalidFilterException::filter($filterClass);
             }
 

@@ -3,10 +3,11 @@
 namespace Notifiable\ReceiveEmail\Facades;
 
 use Illuminate\Support\Facades\Facade;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Support\Testing\FakeParsedMail;
 
 /**
- * @mixin \Notifiable\ReceiveEmail\Contracts\ParsedMail
+ * @mixin ParsedMailContract
  */
 class ParsedMail extends Facade
 {
@@ -18,7 +19,7 @@ class ParsedMail extends Facade
     /**
      * @param  array<mixed>  $data
      */
-    public static function fake(array $data = []): FakeParsedMail
+    public static function fake(array $data = []): ParsedMailContract
     {
         $fakeParsedMail = (new FakeParsedMail)->fake($data);
 

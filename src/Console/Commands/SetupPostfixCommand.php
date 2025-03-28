@@ -6,7 +6,7 @@ use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Arr;
 use Symfony\Component\Console\Command\Command;
 
-class SetupPostfix extends ConsoleCommand
+class SetupPostfixCommand extends ConsoleCommand
 {
     public const POSTFIX_DIR = '/etc/postfix';
 
