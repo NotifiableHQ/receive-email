@@ -3,8 +3,8 @@
 namespace Notifiable\ReceiveEmail;
 
 use Illuminate\Support\ServiceProvider;
-use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmail;
-use Notifiable\ReceiveEmail\Console\Commands\SetupPostfix;
+use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmailCommand;
+use Notifiable\ReceiveEmail\Console\Commands\SetupPostfixCommand;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
@@ -43,8 +43,8 @@ class ReceiveEmailServiceProvider extends ServiceProvider
     private function registerCommands(): void
     {
         $this->commands([
-            SetupPostfix::class,
-            ReceiveEmail::class,
+            SetupPostfixCommand::class,
+            ReceiveEmailCommand::class,
         ]);
     }
 }

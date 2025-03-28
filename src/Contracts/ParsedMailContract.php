@@ -6,13 +6,16 @@ use Carbon\CarbonImmutable;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Enums\Source;
 
-interface ParsedMail
+interface ParsedMailContract
 {
-    public function parser(Parser $parser): ParsedMail;
+    /**
+     * @param  string|resource  $source
+     */
+    public static function source($source, Source $type = Source::Stream): ParsedMailContract;
 
-    public function getParser(): Parser;
+    public function store(string $path): bool;
 
     public function id(): string;
 
@@ -44,4 +47,8 @@ interface ParsedMail
     public function html(): ?string;
 
     public function toMail(): Mail;
+
+    public function getHeaderOrFail(string $key): string;
+
+    public function getHeader(string $key): ?string;
 }

@@ -3,13 +3,13 @@
 namespace Notifiable\ReceiveEmail\Support\Testing;
 
 use Carbon\CarbonImmutable;
-use Notifiable\ReceiveEmail\Contracts\ParsedMail;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Enums\Source;
 
-class FakeParsedMail implements ParsedMail
+class FakeParsedMail implements ParsedMailContract
 {
     /**
      * @var array<string, mixed>
@@ -26,14 +26,14 @@ class FakeParsedMail implements ParsedMail
         return $this;
     }
 
-    public function parser(Parser $parser): ParsedMail
+    public static function source($source, Source $type = Source::Stream): ParsedMailContract
     {
-        return $this;
+        return new FakeParsedMail;
     }
 
-    public function getParser(): Parser
+    public function store(string $path): bool
     {
-        return new Parser;
+        return $this->fakeData['stored'] ?? false;
     }
 
     public function id(): string
@@ -146,5 +146,15 @@ class FakeParsedMail implements ParsedMail
                 $this->text(),
                 $this->html()
             );
+    }
+
+    public function getHeaderOrFail(string $key): string
+    {
+        return $this->fakeData['header'][$key] ?? '';
+    }
+
+    public function getHeader(string $key): ?string
+    {
+        return $this->fakeData['header'][$key] ?? null;
     }
 }

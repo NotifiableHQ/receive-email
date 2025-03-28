@@ -3,14 +3,16 @@
 namespace Notifiable\ReceiveEmail;
 
 use Carbon\CarbonImmutable;
-use Notifiable\ReceiveEmail\Contracts\ParsedMail;
+use InvalidArgumentException;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
+use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use PhpMimeMailParser\Parser;
 
-class ParserParsedMail implements ParsedMail
+class ParserParsedMail implements ParsedMailContract
 {
     private string $id;
 
@@ -42,29 +44,36 @@ class ParserParsedMail implements ParsedMail
     private ?string $html;
 
     public function __construct(
-        protected Parser $parser,
+        private Parser $parser
     ) {}
 
-    public function parser(Parser $parser): ParsedMail
+    /**
+     * @param  string|resource  $source
+     */
+    public static function source($source, Source $type = Source::Stream): ParsedMailContract
     {
-        $this->parser = $parser;
+        $parser = new Parser;
 
-        return $this;
+        return new ParserParsedMail(match ($type) {
+            Source::Stream => is_string($source) ? throw new InvalidArgumentException('Source must be a resource') : $parser->setStream($source),
+            Source::Path => is_string($source) ? $parser->setPath($source) : throw new InvalidArgumentException('Source must be a string'),
+            Source::Text => is_string($source) ? $parser->setText($source) : throw new InvalidArgumentException('Source must be a string'),
+        });
     }
 
-    public function getParser(): Parser
+    public function store(string $path): bool
     {
-        return $this->parser;
+        return storage()->put($path, $this->parser->getStream());
     }
 
     public function id(): string
     {
-        return $this->id ??= $this->getHeader('message-id');
+        return $this->id ??= $this->getHeaderOrFail('message-id');
     }
 
     public function date(): CarbonImmutable
     {
-        return $this->date ??= CarbonImmutable::parse($this->getHeader('date'))->utc();
+        return $this->date ??= CarbonImmutable::parse($this->getHeaderOrFail('date'))->utc();
     }
 
     public function sender(): Address
@@ -85,7 +94,7 @@ class ParserParsedMail implements ParsedMail
 
     public function subject(): ?string
     {
-        return $this->subject ??= $this->getOrNullHeader('subject');
+        return $this->subject ??= $this->getHeader('subject');
     }
 
     /**
@@ -144,7 +153,7 @@ class ParserParsedMail implements ParsedMail
         );
     }
 
-    private function getHeader(string $key): string
+    public function getHeaderOrFail(string $key): string
     {
         if (($header = $this->parser->getHeader($key)) === false) {
             throw MalformedMailException::missingHeader($key);
@@ -153,7 +162,7 @@ class ParserParsedMail implements ParsedMail
         return $header;
     }
 
-    private function getOrNullHeader(string $key): ?string
+    public function getHeader(string $key): ?string
     {
         if (($header = $this->parser->getHeader($key)) === false) {
             return null;

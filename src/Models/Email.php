@@ -7,10 +7,10 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
-use Notifiable\ReceiveEmail\Contracts\ParsedMail;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
+use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
-use Notifiable\ReceiveEmail\ParserParsedMail;
-use PhpMimeMailParser\Parser;
+use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 use function Notifiable\ReceiveEmail\storage;
 
@@ -38,8 +38,6 @@ class Email extends Model
         'created_at' => 'immutable_datetime',
     ];
 
-    private Parser $parser;
-
     public function getTable(): string
     {
         return Config::string('receive_email.email-table');
@@ -58,6 +56,13 @@ class Email extends Model
         return $this->belongsTo(Sender::class);
     }
 
+    public function path(): string
+    {
+        $date = $this->created_at->format('Ymd');
+
+        return "emails/$date/{$this->ulid}";
+    }
+
     /**
      * @throws FailedToDeleteException
      */
@@ -70,62 +75,28 @@ class Email extends Model
         }
     }
 
-    public function parse(): Parser
+    public function parsedMail(): ParsedMailContract
     {
-        // Add fake parser for testing purposes.
-        // instead of (new Parser) call on a parser facade
-        // Add wrapper to parser to make it easier to fetch common data like subject, to, and from addresses and names
-        // This will also make it easier to swap parsers, like what beyond code is using.
-        // Pass the ulid to the parser instead of the path so it's more sensible when faking
-
-        if (! isset($this->parser)) {
-            $this->parser = (new Parser)->setPath(
-                storage()->path($this->path())
-            );
-        }
-
-        return $this->parser;
-    }
-
-    public function parsedMail(): ParsedMail
-    {
-        return new ParserParsedMail($this->parse());
-    }
-
-    public function path(): string
-    {
-        $date = $this->created_at->format('Ymd');
-
-        return "emails/$date/{$this->ulid}";
+        return ParsedMail::source($this->path(), Source::Path);
     }
 
     /**
      * @return string[]
      */
-    public function mailboxes(bool $includeCc = true, bool $includeBcc = true): array
+    public function mailboxes(bool $includeCcBcc = true): array
     {
-        /** @var array<string> $addresses */
-        $addresses = $this->parsedMail()->recipients()->toAddresses();
+        $recipients = $this->parsedMail()->recipients();
 
-        if ($includeCc) {
-            /** @var array<string> ccAddresses */
-            $ccAddresses = $this->parsedMail()->recipients()->ccAddresses();
-
-            $addresses = array_merge($addresses, $ccAddresses);
-        }
-
-        if ($includeBcc) {
-            /** @var array<string> bccAddresses */
-            $bccAddresses = $this->parsedMail()->recipients()->bccAddresses();
-
-            $addresses = array_merge($addresses, $bccAddresses);
-        }
-
-        return $addresses;
+        return $includeCcBcc
+            ? $recipients->allAddresses()
+            : $recipients->toAddresses();
     }
 
     public function wasSentTo(string $email): bool
     {
-        return in_array($email, $this->mailboxes());
+        return in_array(
+            mb_strtolower($email),
+            array_map('mb_strtolower', $this->mailboxes())
+        );
     }
 }
