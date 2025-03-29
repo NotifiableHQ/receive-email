@@ -50,14 +50,12 @@ class ParserParsedMail implements ParsedMailContract
     /**
      * @param  string|resource  $source
      */
-    public static function source($source, Source $type = Source::Stream): ParsedMailContract
+    public function source($source, Source $type = Source::Stream): ParsedMailContract
     {
-        $parser = new Parser;
-
         return new ParserParsedMail(match ($type) {
-            Source::Stream => is_string($source) ? throw new InvalidArgumentException('Source must be a resource') : $parser->setStream($source),
-            Source::Path => is_string($source) ? $parser->setPath($source) : throw new InvalidArgumentException('Source must be a string'),
-            Source::Text => is_string($source) ? $parser->setText($source) : throw new InvalidArgumentException('Source must be a string'),
+            Source::Stream => is_string($source) ? throw new InvalidArgumentException('Source must be a resource') : $this->parser->setStream($source),
+            Source::Path => is_string($source) ? $this->parser->setPath($source) : throw new InvalidArgumentException('Source must be a string'),
+            Source::Text => is_string($source) ? $this->parser->setText($source) : throw new InvalidArgumentException('Source must be a string'),
         });
     }
 

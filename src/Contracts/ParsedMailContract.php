@@ -13,7 +13,7 @@ interface ParsedMailContract
     /**
      * @param  string|resource  $source
      */
-    public static function source($source, Source $type = Source::Stream): ParsedMailContract;
+    public function source($source, Source $type = Source::Stream): ParsedMailContract;
 
     public function store(string $path): bool;
 

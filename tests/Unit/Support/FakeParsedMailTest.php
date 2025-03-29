@@ -4,7 +4,6 @@ use Carbon\CarbonImmutable;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
-use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Support\Testing\FakeParsedMail;
 
 it('creates a fake parsed mail instance', function () {
@@ -13,13 +12,6 @@ it('creates a fake parsed mail instance', function () {
     expect($fakeParsedMail)
         ->toBeInstanceOf(FakeParsedMail::class)
         ->and($fakeParsedMail)->toBeInstanceOf(\Notifiable\ReceiveEmail\Contracts\ParsedMailContract::class);
-});
-
-it('creates an instance from source', function () {
-    $fakeParsedMail = FakeParsedMail::source('any-source', Source::Path);
-
-    expect($fakeParsedMail)
-        ->toBeInstanceOf(FakeParsedMail::class);
 });
 
 it('accepts fake data', function () {

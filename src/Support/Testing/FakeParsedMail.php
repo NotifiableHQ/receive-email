@@ -10,7 +10,7 @@ use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
 use Notifiable\ReceiveEmail\Enums\Source;
 
-class FakeParsedMail implements ParsedMailContract, Fake
+class FakeParsedMail implements Fake, ParsedMailContract
 {
     /**
      * @var array<string, mixed>
@@ -30,9 +30,9 @@ class FakeParsedMail implements ParsedMailContract, Fake
     /**
      * @param  string|resource  $source
      */
-    public static function source($source, Source $type = Source::Stream): ParsedMailContract
+    public function source($source, Source $type = Source::Stream): ParsedMailContract
     {
-        return new FakeParsedMail;
+        return $this;
     }
 
     public function store(string $path): bool
