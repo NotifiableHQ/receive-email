@@ -50,6 +50,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Pipe Filter Class
+    |--------------------------------------------------------------------------
+    |
+    | When Postfix receives an email it goes through this filter first, given
+    | the parsed mail. Here you may customize the processing.
+    |
+    */
+
+    'pipe-filter' => \Notifiable\ReceiveEmail\ApplyFilters::class,
+
+    /*
+    |--------------------------------------------------------------------------
     | Email Filters
     |--------------------------------------------------------------------------
     |
