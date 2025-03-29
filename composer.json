@@ -54,6 +54,7 @@
     "prefer-stable": true,
     "scripts": {
         "test": "@php vendor/bin/pest",
+        "test-coverage": "@php vendor/bin/pest --coverage --coverage-html coverage-report",
         "review": [
             "@php vendor/bin/pint",
             "@php vendor/bin/phpstan analyse",
