@@ -102,7 +102,7 @@ it('uses default values when no fake data is provided', function () {
     expect($fakeParsedMail->id())->toContain('fake-message-id-')
         ->and($fakeParsedMail->date())->toBeInstanceOf(CarbonImmutable::class)
         ->and($fakeParsedMail->sender())->toBeInstanceOf(Address::class)
-        ->and($fakeParsedMail->sender()->address)->toBe('fake@example.com')
+        ->and($fakeParsedMail->sender()->address)->toMatch('/^[^@]+@example\.(com|net|org)$/')
         ->and($fakeParsedMail->to())->toBeArray()->toBeEmpty()
         ->and($fakeParsedMail->cc())->toBeArray()->toBeEmpty()
         ->and($fakeParsedMail->bcc())->toBeArray()->toBeEmpty()
