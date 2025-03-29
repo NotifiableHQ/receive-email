@@ -12,7 +12,7 @@ class ReceiveEmailServiceProvider extends ServiceProvider
     /**
      * @var array<class-string,class-string>
      */
-    public $bindings = [
+    public $singletons = [
         ParsedMail::class => ParserParsedMail::class,
     ];
 

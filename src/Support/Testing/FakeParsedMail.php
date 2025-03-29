@@ -3,13 +3,14 @@
 namespace Notifiable\ReceiveEmail\Support\Testing;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Testing\Fakes\Fake;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
 use Notifiable\ReceiveEmail\Enums\Source;
 
-class FakeParsedMail implements ParsedMailContract
+class FakeParsedMail implements ParsedMailContract, Fake
 {
     /**
      * @var array<string, mixed>
