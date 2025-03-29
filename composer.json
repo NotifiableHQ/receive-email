@@ -53,9 +53,11 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "scripts": {
+        "test": "@php vendor/bin/pest",
         "review": [
             "@php vendor/bin/pint",
-            "@php vendor/bin/phpstan analyse"
+            "@php vendor/bin/phpstan analyse",
+            "@test"
         ]
     }
 }
