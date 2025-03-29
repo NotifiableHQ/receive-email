@@ -37,17 +37,23 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function store(string $path): bool
     {
-        return $this->fakeData['stored'] ?? false;
+        $isStored = $this->fakeData['stored'] ?? false;
+
+        return is_callable($isStored) ? $isStored() : $isStored;
     }
 
     public function id(): string
     {
-        return $this->fakeData['id'] ?? 'fake-message-id-'.uniqid();
+        $id = $this->fakeData['id'] ?? 'fake-message-id-'.uniqid();
+
+        return is_callable($id) ? $id() : $id;
     }
 
     public function date(): CarbonImmutable
     {
         $date = $this->fakeData['date'] ?? CarbonImmutable::now()->utc();
+
+        $date = is_callable($date) ? $date() : $date;
 
         return is_string($date)
             ? CarbonImmutable::parse($date)->utc()
@@ -60,6 +66,8 @@ class FakeParsedMail implements Fake, ParsedMailContract
             ?? $this->fakeData['from']
             ?? Address::from(['display' => fake()->name(), 'address' => fake()->safeEmail()]);
 
+        $sender = is_callable($sender) ? $sender() : $sender;
+
         return $sender instanceof Address
             ? $sender
             : Address::from($sender);
@@ -71,6 +79,8 @@ class FakeParsedMail implements Fake, ParsedMailContract
     public function to(): array
     {
         $to = $this->fakeData['to'] ?? [];
+
+        $to = is_callable($to) ? $to() : $to;
 
         if ($to === []) {
             return [];
@@ -88,6 +98,8 @@ class FakeParsedMail implements Fake, ParsedMailContract
     {
         $cc = $this->fakeData['cc'] ?? [];
 
+        $cc = is_callable($cc) ? $cc() : $cc;
+
         if ($cc === []) {
             return [];
         }
@@ -104,6 +116,8 @@ class FakeParsedMail implements Fake, ParsedMailContract
     {
         $bcc = $this->fakeData['bcc'] ?? [];
 
+        $bcc = is_callable($bcc) ? $bcc() : $bcc;
+
         if ($bcc === []) {
             return [];
         }
@@ -115,28 +129,36 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function recipients(): Recipients
     {
-        return $this->fakeData['recipients']
+        $recipients = $this->fakeData['recipients']
             ?? new Recipients($this->to(), $this->cc(), $this->bcc());
+
+        return is_callable($recipients) ? $recipients() : $recipients;
     }
 
     public function subject(): ?string
     {
-        return $this->fakeData['subject'] ?? null;
+        $subject = $this->fakeData['subject'] ?? null;
+
+        return is_callable($subject) ? $subject() : $subject;
     }
 
     public function text(): ?string
     {
-        return $this->fakeData['text'] ?? null;
+        $text = $this->fakeData['text'] ?? null;
+
+        return is_callable($text) ? $text() : $text;
     }
 
     public function html(): ?string
     {
-        return $this->fakeData['html'] ?? null;
+        $html = $this->fakeData['html'] ?? null;
+
+        return is_callable($html) ? $html() : $html;
     }
 
     public function toMail(): Mail
     {
-        return $this->fakeData['mail'] ?? new Mail(
+        $mail = $this->fakeData['mail'] ?? new Mail(
             $this->id(),
             $this->date(),
             $this->sender(),
@@ -145,15 +167,21 @@ class FakeParsedMail implements Fake, ParsedMailContract
             $this->text(),
             $this->html()
         );
+
+        return is_callable($mail) ? $mail() : $mail;
     }
 
     public function getHeaderOrFail(string $key): string
     {
-        return $this->fakeData['header'][$key] ?? '';
+        $header = $this->fakeData['header'][$key] ?? '';
+
+        return is_callable($header) ? $header() : $header;
     }
 
     public function getHeader(string $key): ?string
     {
-        return $this->fakeData['header'][$key] ?? null;
+        $header = $this->fakeData['header'][$key] ?? null;
+
+        return is_callable($header) ? $header() : $header;
     }
 }
