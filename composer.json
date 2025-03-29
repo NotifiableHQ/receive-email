@@ -58,7 +58,7 @@
         "review": [
             "@php vendor/bin/pint",
             "@php vendor/bin/phpstan analyse",
-            "@test"
+            "@test-coverage"
         ]
     }
 }

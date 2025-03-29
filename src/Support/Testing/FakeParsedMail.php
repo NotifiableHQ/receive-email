@@ -47,11 +47,7 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function date(): CarbonImmutable
     {
-        $date = $this->fakeData['date'] ?? null;
-
-        if ($date === null) {
-            return CarbonImmutable::now()->utc();
-        }
+        $date = $this->fakeData['date'] ?? CarbonImmutable::now()->utc();
 
         return is_string($date)
             ? CarbonImmutable::parse($date)->utc()
@@ -60,11 +56,9 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function sender(): Address
     {
-        $sender = $this->fakeData['sender'] ?? $this->fakeData['from'] ?? null;
-
-        if ($sender === null) {
-            return Address::from(['display' => 'Fake Sender', 'address' => 'fake@example.com']);
-        }
+        $sender = $this->fakeData['sender']
+            ?? $this->fakeData['from']
+            ?? Address::from(['display' => fake()->name(), 'address' => fake()->safeEmail()]);
 
         return $sender instanceof Address
             ? $sender
@@ -72,15 +66,11 @@ class FakeParsedMail implements Fake, ParsedMailContract
     }
 
     /**
-     * @return Address[]|null
+     * @return Address[]
      */
-    public function to(): ?array
+    public function to(): array
     {
-        if (! isset($this->fakeData['to'])) {
-            return [];
-        }
-
-        $to = $this->fakeData['to'];
+        $to = $this->fakeData['to'] ?? [];
 
         if ($to === []) {
             return [];
@@ -92,15 +82,11 @@ class FakeParsedMail implements Fake, ParsedMailContract
     }
 
     /**
-     * @return Address[]|null
+     * @return Address[]
      */
-    public function cc(): ?array
+    public function cc(): array
     {
-        if (! isset($this->fakeData['cc'])) {
-            return [];
-        }
-
-        $cc = $this->fakeData['cc'];
+        $cc = $this->fakeData['cc'] ?? [];
 
         if ($cc === []) {
             return [];
@@ -112,15 +98,11 @@ class FakeParsedMail implements Fake, ParsedMailContract
     }
 
     /**
-     * @return Address[]|null
+     * @return Address[]
      */
-    public function bcc(): ?array
+    public function bcc(): array
     {
-        if (! isset($this->fakeData['bcc'])) {
-            return [];
-        }
-
-        $bcc = $this->fakeData['bcc'];
+        $bcc = $this->fakeData['bcc'] ?? [];
 
         if ($bcc === []) {
             return [];
@@ -133,13 +115,8 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function recipients(): Recipients
     {
-        $recipients = $this->fakeData['recipients'] ?? null;
-
-        if ($recipients instanceof Recipients) {
-            return $recipients;
-        }
-
-        return new Recipients($this->to() ?? [], $this->cc() ?? [], $this->bcc() ?? []);
+        return $this->fakeData['recipients']
+            ?? new Recipients($this->to(), $this->cc(), $this->bcc());
     }
 
     public function subject(): ?string
@@ -159,13 +136,7 @@ class FakeParsedMail implements Fake, ParsedMailContract
 
     public function toMail(): Mail
     {
-        $mail = $this->fakeData['mail'] ?? null;
-
-        if ($mail instanceof Mail) {
-            return $mail;
-        }
-
-        return new Mail(
+        return $this->fakeData['mail'] ?? new Mail(
             $this->id(),
             $this->date(),
             $this->sender(),
