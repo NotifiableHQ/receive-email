@@ -60,7 +60,7 @@ class Email extends Model
     {
         $date = $this->created_at->format('Ymd');
 
-        return "emails/$date/{$this->ulid}";
+        return storage()->path("emails/$date/{$this->ulid}");
     }
 
     /**
@@ -77,7 +77,7 @@ class Email extends Model
 
     public function parsedMail(): ParsedMailContract
     {
-        return ParsedMail::source(storage()->path($this->path()), Source::Path);
+        return ParsedMail::source($this->path(), Source::Path);
     }
 
     /**

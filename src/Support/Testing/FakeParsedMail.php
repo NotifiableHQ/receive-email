@@ -14,7 +14,7 @@ class FakeParsedMail implements ParsedMailContract
     /**
      * @var array<string, mixed>
      */
-    private array $fakeData;
+    private array $fakeData = [];
 
     /**
      * @param  array<string, mixed>  $data
@@ -26,6 +26,9 @@ class FakeParsedMail implements ParsedMailContract
         return $this;
     }
 
+    /**
+     * @param  string|resource  $source
+     */
     public static function source($source, Source $type = Source::Stream): ParsedMailContract
     {
         return new FakeParsedMail;
@@ -38,12 +41,16 @@ class FakeParsedMail implements ParsedMailContract
 
     public function id(): string
     {
-        return $this->fakeData['id'];
+        return $this->fakeData['id'] ?? 'fake-message-id-'.uniqid();
     }
 
     public function date(): CarbonImmutable
     {
-        $date = $this->fakeData['date'];
+        $date = $this->fakeData['date'] ?? null;
+
+        if ($date === null) {
+            return CarbonImmutable::now()->utc();
+        }
 
         return is_string($date)
             ? CarbonImmutable::parse($date)->utc()
@@ -52,7 +59,11 @@ class FakeParsedMail implements ParsedMailContract
 
     public function sender(): Address
     {
-        $sender = $this->fakeData['sender'] ?? $this->fakeData['from'];
+        $sender = $this->fakeData['sender'] ?? $this->fakeData['from'] ?? null;
+
+        if ($sender === null) {
+            return Address::from(['name' => 'Fake Sender', 'email' => 'fake@example.com']);
+        }
 
         return $sender instanceof Address
             ? $sender
@@ -60,10 +71,14 @@ class FakeParsedMail implements ParsedMailContract
     }
 
     /**
-     * @return Address[]
+     * @return Address[]|null
      */
-    public function to(): array
+    public function to(): ?array
     {
+        if (! isset($this->fakeData['to'])) {
+            return [];
+        }
+
         $to = $this->fakeData['to'];
 
         if ($to === []) {
@@ -76,10 +91,14 @@ class FakeParsedMail implements ParsedMailContract
     }
 
     /**
-     * @return Address[]
+     * @return Address[]|null
      */
-    public function cc(): array
+    public function cc(): ?array
     {
+        if (! isset($this->fakeData['cc'])) {
+            return [];
+        }
+
         $cc = $this->fakeData['cc'];
 
         if ($cc === []) {
@@ -92,10 +111,14 @@ class FakeParsedMail implements ParsedMailContract
     }
 
     /**
-     * @return Address[]
+     * @return Address[]|null
      */
-    public function bcc(): array
+    public function bcc(): ?array
     {
+        if (! isset($this->fakeData['bcc'])) {
+            return [];
+        }
+
         $bcc = $this->fakeData['bcc'];
 
         if ($bcc === []) {
@@ -109,11 +132,13 @@ class FakeParsedMail implements ParsedMailContract
 
     public function recipients(): Recipients
     {
-        $recipients = $this->fakeData['recipients'];
+        $recipients = $this->fakeData['recipients'] ?? null;
 
-        return $recipients instanceof Recipients
-            ? $recipients
-            : new Recipients($this->to(), $this->cc(), $this->bcc());
+        if ($recipients instanceof Recipients) {
+            return $recipients;
+        }
+
+        return new Recipients($this->to() ?? [], $this->cc() ?? [], $this->bcc() ?? []);
     }
 
     public function subject(): ?string
@@ -133,19 +158,21 @@ class FakeParsedMail implements ParsedMailContract
 
     public function toMail(): Mail
     {
-        $mail = $this->fakeData['mail'];
+        $mail = $this->fakeData['mail'] ?? null;
 
-        return $mail instanceof Mail
-            ? $mail
-            : new Mail(
-                $this->id(),
-                $this->date(),
-                $this->sender(),
-                $this->recipients(),
-                $this->subject(),
-                $this->text(),
-                $this->html()
-            );
+        if ($mail instanceof Mail) {
+            return $mail;
+        }
+
+        return new Mail(
+            $this->id(),
+            $this->date(),
+            $this->sender(),
+            $this->recipients(),
+            $this->subject(),
+            $this->text(),
+            $this->html()
+        );
     }
 
     public function getHeaderOrFail(string $key): string
