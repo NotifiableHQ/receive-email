@@ -62,7 +62,7 @@ class FakeParsedMail implements ParsedMailContract
         $sender = $this->fakeData['sender'] ?? $this->fakeData['from'] ?? null;
 
         if ($sender === null) {
-            return Address::from(['name' => 'Fake Sender', 'email' => 'fake@example.com']);
+            return Address::from(['display' => 'Fake Sender', 'address' => 'fake@example.com']);
         }
 
         return $sender instanceof Address
