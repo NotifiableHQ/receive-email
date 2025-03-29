@@ -26,17 +26,17 @@ interface ParsedMailContract
     /**
      * @return Address[]
      */
-    public function to(): ?array;
+    public function to(): array;
 
     /**
      * @return Address[]
      */
-    public function cc(): ?array;
+    public function cc(): array;
 
     /**
      * @return Address[]
      */
-    public function bcc(): ?array;
+    public function bcc(): array;
 
     public function recipients(): Recipients;
 
