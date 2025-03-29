@@ -3,13 +3,10 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Config;
-use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
-use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
-use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
-use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
+use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeCommandException;
+use Notifiable\ReceiveEmail\Exceptions\InvalidPipeFilterException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 class ReceiveEmailCommand extends Command
@@ -38,7 +35,15 @@ class ReceiveEmailCommand extends Command
 
         $parsedMail = ParsedMail::source($emailStream);
 
-        $this->applyFilters($parsedMail);
+        $pipeFilter = app(config('receive_email.pipe-filter'));
+
+        if (! ($pipeFilter instanceof PipeFilterContract)) {
+            throw new InvalidPipeFilterException;
+        }
+
+        if ($pipeFilter->handle($parsedMail) === false) {
+            exit(self::EX_NOHOST);
+        }
 
         $pipeCommand = app(config('receive_email.pipe-command'));
 
@@ -49,25 +54,5 @@ class ReceiveEmailCommand extends Command
         $pipeCommand->handle($parsedMail);
 
         return self::EX_OK;
-    }
-
-    private function applyFilters(ParsedMailContract $parsedMail): void
-    {
-        /** @var string $filterClass */
-        foreach (Config::array('receive_email.email-filters', []) as $filterClass) {
-            $filter = app($filterClass);
-
-            if (! ($filter instanceof EmailFilterContract)) {
-                throw InvalidFilterException::filter($filterClass);
-            }
-
-            if ($filter->filter($parsedMail)) {
-                continue;
-            }
-
-            event(new EmailFilteredOut($filterClass, $parsedMail->toMail()));
-
-            exit(self::EX_NOHOST);
-        }
     }
 }
