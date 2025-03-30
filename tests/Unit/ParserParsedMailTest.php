@@ -88,7 +88,7 @@ it('stores the email correctly', function () {
     $result = $this->parsedMail->store($path);
 
     expect($result)->toBeTrue();
-    $disk->assertExists($path);
+    $disk->assertExists($path, $stream);
 });
 
 it('gets message id correctly', function () {
