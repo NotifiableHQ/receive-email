@@ -7,7 +7,63 @@ composer require notifiablehq/receive-email
 ```
 
 ## Usage
-`TBD`
+
+### 1. Publish Config and Migrations
+
+Publish the configuration and migration files:
+
+```bash
+php artisan vendor:publish --provider="Notifiable\\ReceiveEmail\\ReceiveEmailServiceProvider" --tag=receive-email
+```
+Then run the migrations:
+
+```bash
+php artisan migrate
+```
+
+### 2. Listen for Incoming Emails
+
+Whenever an email is received, the package will dispatch the `Notifiable\\ReceiveEmail\\Events\\EmailReceived` event. On Laravel 11 and above, you should use a listener class:
+
+#### Create the Listener
+
+Generate a listener class:
+
+```bash
+php artisan make:listener HandleIncomingEmail
+```
+
+Then implement the `handle` method:
+
+```php
+namespace App\Listeners;
+
+use Notifiable\ReceiveEmail\Events\EmailReceived;
+
+class HandleIncomingEmail
+{
+    public function handle(EmailReceived $event): void
+    {
+        $email = $event->email;
+        
+        \Log::info('Received email with subject: ' . $email->parsedMail()->subject());
+    }
+}
+```
+
+### 3. Accessing Email Data
+
+The `Email` model gives you access to sender, recipients, subject, and body through the `parsedMail` method. Example:
+
+```php
+/** @var \Notifiable\ReceiveEmail\Contracts\ParsedMailContract $mail */
+$mail = $email->parsedMail();
+
+$subject = $mail->subject();
+$textBody = $mail->text();
+$htmlBody = $mail->html();
+$recipients = $mail->recipients();
+```
 
 ## Forge Deployment
 1. Add this to your recipes, you can name it `Install Mailparse`. Make sure the user is `root`.
