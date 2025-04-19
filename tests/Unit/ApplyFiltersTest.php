@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Event;
 use Notifiable\ReceiveEmail\ApplyFilters;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
-use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
+use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
@@ -26,7 +26,7 @@ it('passes when no filters are configured', function () {
     $result = $applyFilters->handle(ParsedMail::getFacadeRoot());
 
     expect($result)->toBeTrue();
-    Event::assertNotDispatched(EmailFilteredOut::class);
+    Event::assertNotDispatched(EmailRejected::class);
 });
 
 it('passes when all filters pass', function () {
@@ -53,7 +53,7 @@ it('passes when all filters pass', function () {
     $result = $applyFilters->handle(ParsedMail::getFacadeRoot());
 
     expect($result)->toBeTrue();
-    Event::assertNotDispatched(EmailFilteredOut::class);
+    Event::assertNotDispatched(EmailRejected::class);
 });
 
 it('fails when a filter fails', function () {
@@ -81,7 +81,7 @@ it('fails when a filter fails', function () {
     $result = $applyFilters->handle($fakeMail);
 
     expect($result)->toBeFalse();
-    Event::assertDispatched(function (EmailFilteredOut $event) use ($filterClass) {
+    Event::assertDispatched(function (EmailRejected $event) use ($filterClass) {
         return $event->filterClass === $filterClass
             && $event->mail->subject === 'Test Email';
     });
@@ -124,8 +124,8 @@ it('stops at the first failing filter', function () {
     $result = $applyFilters->handle($fakeMail);
 
     expect($result)->toBeFalse();
-    Event::assertDispatched(EmailFilteredOut::class, 1);
-    Event::assertDispatched(function (EmailFilteredOut $event) use ($failingClass) {
+    Event::assertDispatched(EmailRejected::class, 1);
+    Event::assertDispatched(function (EmailRejected $event) use ($failingClass) {
         return $event->filterClass === $failingClass;
     });
 });

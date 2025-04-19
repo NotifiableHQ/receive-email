@@ -4,7 +4,7 @@ namespace Notifiable\ReceiveEmail\Events;
 
 use Notifiable\ReceiveEmail\Data\Mail;
 
-class EmailFilteredOut
+class EmailRejected
 {
     public function __construct(
         public string $filterClass,

@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
-use Notifiable\ReceiveEmail\Events\EmailFilteredOut;
+use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
 
 class ApplyFilters implements PipeFilterContract
@@ -25,7 +25,7 @@ class ApplyFilters implements PipeFilterContract
                 continue;
             }
 
-            event(new EmailFilteredOut($filterClass, $parsedMail->toMail()));
+            event(new EmailRejected($filterClass, $parsedMail->toMail()));
 
             return false;
         }
