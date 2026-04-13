@@ -63,14 +63,13 @@ it('rolls back transaction on error', function () {
     $sender = new Address('test@example.com', 'Test Sender');
 
     $mockParsedMail = mock(ParsedMailContract::class);
-    $mockParsedMail->shouldReceive('id')->andReturn('<test-id@example.com>');
-    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
+    // Make id() throw to trigger rollback during email creation
     $mockParsedMail->shouldReceive('sender')->andReturn($sender);
-    // Make store throw an exception to trigger rollback
-    $mockParsedMail->shouldReceive('store')->andThrow(new \Exception('Test exception'));
+    $mockParsedMail->shouldReceive('id')->andThrow(new Exception('Test exception'));
+    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
 
     $storeAndDispatch = new StoreAndDispatch;
 
     expect(fn () => $storeAndDispatch->handle($mockParsedMail))
-        ->toThrow(\Exception::class, 'Test exception');
+        ->toThrow(Exception::class, 'Test exception');
 });

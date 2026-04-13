@@ -33,26 +33,32 @@ class ReceiveEmailCommand extends Command
             return self::EX_NOINPUT;
         }
 
-        $parsedMail = ParsedMail::source($emailStream);
+        try {
+            $parsedMail = ParsedMail::source($emailStream);
 
-        $pipeFilter = app(config('receive_email.pipe-filter'));
+            $pipeFilter = app(config('receive_email.pipe-filter'));
 
-        if (! ($pipeFilter instanceof PipeFilterContract)) {
-            throw new InvalidPipeFilterException;
+            if (! ($pipeFilter instanceof PipeFilterContract)) {
+                throw InvalidPipeFilterException::invalidClass(config('receive_email.pipe-filter'));
+            }
+
+            if ($pipeFilter->handle($parsedMail) === false) {
+                return self::EX_NOHOST;
+            }
+
+            $pipeCommand = app(config('receive_email.pipe-command'));
+
+            if (! ($pipeCommand instanceof PipeCommandContract)) {
+                throw InvalidPipeCommandException::invalidClass(config('receive_email.pipe-command'));
+            }
+
+            $pipeCommand->handle($parsedMail);
+
+            return self::EX_OK;
+        } finally {
+            if (is_resource($emailStream)) {
+                fclose($emailStream);
+            }
         }
-
-        if ($pipeFilter->handle($parsedMail) === false) {
-            exit(self::EX_NOHOST);
-        }
-
-        $pipeCommand = app(config('receive_email.pipe-command'));
-
-        if (! ($pipeCommand instanceof PipeCommandContract)) {
-            throw new InvalidPipeCommandException;
-        }
-
-        $pipeCommand->handle($parsedMail);
-
-        return self::EX_OK;
     }
 }

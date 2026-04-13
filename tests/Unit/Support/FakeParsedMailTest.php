@@ -1,6 +1,7 @@
 <?php
 
 use Carbon\CarbonImmutable;
+use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
@@ -12,7 +13,7 @@ it('creates a fake parsed mail instance', function () {
 
     expect($fakeParsedMail)
         ->toBeInstanceOf(FakeParsedMail::class)
-        ->and($fakeParsedMail)->toBeInstanceOf(\Notifiable\ReceiveEmail\Contracts\ParsedMailContract::class);
+        ->and($fakeParsedMail)->toBeInstanceOf(ParsedMailContract::class);
 });
 
 it('accepts fake data', function () {

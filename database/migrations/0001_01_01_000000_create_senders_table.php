@@ -25,6 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('received_emails');
+        Schema::dropIfExists(Config::string('receive_email.sender-table'));
     }
 };

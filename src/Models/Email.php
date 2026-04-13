@@ -11,6 +11,7 @@ use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use RuntimeException;
 
 use function Notifiable\ReceiveEmail\storage;
 
@@ -19,7 +20,7 @@ use function Notifiable\ReceiveEmail\storage;
  * @property string $message_id
  * @property-read  Sender $sender
  * @property CarbonImmutable $sent_at
- * @property CarbonImmutable $created_at
+ * @property CarbonImmutable|null $created_at
  */
 class Email extends Model
 {
@@ -58,6 +59,10 @@ class Email extends Model
 
     public function path(): string
     {
+        if ($this->created_at === null) {
+            throw new RuntimeException('Cannot generate path for unsaved Email model.');
+        }
+
         $date = $this->created_at->format('Ymd');
 
         return "emails/$date/{$this->ulid}";
@@ -96,7 +101,8 @@ class Email extends Model
     {
         return in_array(
             mb_strtolower($email),
-            array_map('mb_strtolower', $this->mailboxes())
+            array_map('mb_strtolower', $this->mailboxes()),
+            true
         );
     }
 }

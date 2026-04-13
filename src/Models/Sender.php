@@ -35,6 +35,13 @@ class Sender extends Model
         return Config::string('receive_email.sender-table');
     }
 
+    protected static function booted(): void
+    {
+        static::deleting(function (self $sender) {
+            $sender->emails->each(fn (Email $email) => $email->deleteFile());
+        });
+    }
+
     /** @return HasMany<Email, $this> */
     public function emails(): HasMany
     {

@@ -14,7 +14,8 @@ class SenderDomainBlacklistFilter implements EmailFilterContract
             mb_strtolower($parsedMail->sender()->domain()),
             array_map('mb_strtolower',
                 Config::array('receive_email.sender-domain-blacklist', [])
-            )
+            ),
+            true
         );
     }
 }
