@@ -15,15 +15,15 @@
         }
     ],
     "require": {
-        "php": "^8.2",
-        "illuminate/support": "^12.2",
+        "php": "^8.3",
+        "illuminate/support": "^12.2 || ^13.0",
         "php-mime-mail-parser/php-mime-mail-parser": "^9.0"
     },
     "require-dev": {
         "laravel/pint": "^1.21",
-        "larastan/larastan": "^3.2",
+        "larastan/larastan": "^3.9",
         "pestphp/pest": "^3.7",
-        "orchestra/testbench": "^10.1"
+        "orchestra/testbench": "^10.1 || ^11.0"
     },
     "autoload": {
         "psr-4": {
