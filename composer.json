@@ -15,7 +15,7 @@
         }
     ],
     "require": {
-        "php": "^8.3",
+        "php": "^8.2",
         "illuminate/support": "^12.2 || ^13.0",
         "php-mime-mail-parser/php-mime-mail-parser": "^9.0"
     },
