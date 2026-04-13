@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
@@ -29,8 +31,14 @@ it('uses the configured table name', function () {
 it('belongs to a sender', function () {
     $email = new Email;
 
-    expect($email->sender())->toBeInstanceOf(\Illuminate\Database\Eloquent\Relations\BelongsTo::class);
+    expect($email->sender())->toBeInstanceOf(BelongsTo::class);
 });
+
+it('throws exception when generating path for unsaved email', function () {
+    $email = new Email;
+
+    $email->path();
+})->throws(RuntimeException::class, 'Cannot generate path for unsaved Email model.');
 
 it('generates correct path for email storage', function () {
     $sender = Sender::create([
@@ -70,7 +78,7 @@ it('deletes email file when email is deleted', function () {
 });
 
 it('throws exception when file cannot be deleted', function () {
-    $filesystemMock = Mockery::mock(Illuminate\Contracts\Filesystem\Filesystem::class);
+    $filesystemMock = Mockery::mock(Filesystem::class);
     $filesystemMock->shouldReceive('delete')->andReturn(false);
     $filesystemMock->shouldReceive('path')->andReturn('');
 
@@ -93,7 +101,7 @@ it('throws exception when file cannot be deleted', function () {
 it('can get ParsedMail from email file', function () {
     ParsedMail::shouldReceive('source')
         ->once()
-        ->andReturn(\Mockery::mock(ParsedMailContract::class));
+        ->andReturn(Mockery::mock(ParsedMailContract::class));
 
     $sender = Sender::create([
         'address' => 'sender@example.com',

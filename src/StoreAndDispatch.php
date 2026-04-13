@@ -29,14 +29,14 @@ class StoreAndDispatch implements PipeCommandContract
                 'sent_at' => $parsedMail->date(),
             ]);
 
-            $parsedMail->store($email->path());
-
             DB::commit();
         } catch (Exception $e) {
             DB::rollBack();
 
             throw $e;
         }
+
+        $parsedMail->store($email->path());
 
         event(new EmailReceived($email));
     }

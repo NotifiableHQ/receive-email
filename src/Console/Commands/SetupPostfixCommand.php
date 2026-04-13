@@ -4,14 +4,19 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Arr;
+use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 
 class SetupPostfixCommand extends ConsoleCommand
 {
     public const POSTFIX_DIR = '/etc/postfix';
 
+    private const DOMAIN_PATTERN = '/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/';
+
     /** @var string */
-    protected $signature = 'notifiable:setup-postfix {domain : The domain where to receive emails from.}';
+    protected $signature = 'notifiable:setup-postfix
+        {domain : The domain where to receive emails from.}
+        {--user= : The system user to run the pipe command as.}';
 
     /** @var string */
     protected $description = 'Install and Configure Postfix to receive emails.';
@@ -25,10 +30,22 @@ class SetupPostfixCommand extends ConsoleCommand
         /** @var string $domain */
         $domain = $this->argument('domain');
 
-        $this->installPostfix($domain);
-        $this->configureMainConfigFile($domain);
-        $this->configureMasterConfigFile();
-        $this->reloadPostfix();
+        if (! preg_match(self::DOMAIN_PATTERN, $domain)) {
+            $this->error("Invalid domain: {$domain}");
+
+            return Command::FAILURE;
+        }
+
+        try {
+            $this->installPostfix($domain);
+            $this->configureMainConfigFile($domain);
+            $this->configureMasterConfigFile();
+            $this->reloadPostfix();
+        } catch (RuntimeException $e) {
+            $this->error($e->getMessage());
+
+            return Command::FAILURE;
+        }
 
         return Command::SUCCESS;
     }
@@ -45,8 +62,10 @@ class SetupPostfixCommand extends ConsoleCommand
             return;
         }
 
+        $escapedDomain = escapeshellarg($domain);
+
         $this->line((string) shell_exec('apt-get update'));
-        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/mailname string {$domain}\""));
+        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/mailname string {$escapedDomain}\""));
         $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/main_mailer_type string 'Internet Site'\""));
         $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix'));
     }
@@ -67,9 +86,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $oldHostname = $this->editLine($mainConfig, '/^myhostname = (.*)$/m', $newHostname);
 
         if ($oldHostname === null) {
-            $this->error("'myhostname' is missing from {$mainConfig}.");
-
-            exit(Command::FAILURE);
+            throw new RuntimeException("'myhostname' is missing from {$mainConfig}.");
         }
 
         $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination';
@@ -93,16 +110,32 @@ class SetupPostfixCommand extends ConsoleCommand
         $oldSmtpDaemon = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newSmtpDaemon);
 
         if ($oldSmtpDaemon === null) {
-            $this->error("'smtp inet' is missing from {$masterConfig}.");
-
-            exit(Command::FAILURE);
+            throw new RuntimeException("'smtp inet' is missing from {$masterConfig}.");
         }
 
-        $user = get_current_user();
+        $user = $this->resolveUser();
         $command = $this->getReceiveEmailCommand();
 
         $deliveryMethod = "notifiable unix - n n - - pipe flags=F user=$user argv={$command}";
         $this->upsertLine($masterConfig, $deliveryMethod);
+    }
+
+    private function resolveUser(): string
+    {
+        /** @var string|null $user */
+        $user = $this->option('user');
+
+        if ($user === null) {
+            $user = function_exists('posix_geteuid')
+                ? posix_getpwuid(posix_geteuid())['name'] ?? get_current_user()
+                : get_current_user();
+        }
+
+        if (! preg_match('/^[a-zA-Z0-9_-]+$/', $user)) {
+            throw new RuntimeException("Invalid system user: {$user}");
+        }
+
+        return $user;
     }
 
     private function reloadPostfix(): void
@@ -116,9 +149,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $path = self::POSTFIX_DIR.'/'.$config;
 
         if (! file_exists($path)) {
-            $this->error("The {$path} file does not exists!");
-
-            exit(Command::FAILURE);
+            throw new RuntimeException("The {$path} file does not exist!");
         }
 
         return $path;
@@ -129,9 +160,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $content = file_get_contents($filePath);
 
         if ($content === false) {
-            $this->error("Failed to read file: {$filePath}");
-
-            exit(Command::FAILURE);
+            throw new RuntimeException("Failed to read file: {$filePath}");
         }
 
         $matches = [];
@@ -156,9 +185,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $content = file_get_contents($filePath);
 
         if ($content === false) {
-            $this->error("Failed to read file: {$filePath}");
-
-            exit(Command::FAILURE);
+            throw new RuntimeException("Failed to read file: {$filePath}");
         }
 
         if (str($content)->contains($line)) {

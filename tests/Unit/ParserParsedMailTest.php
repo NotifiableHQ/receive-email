@@ -4,6 +4,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Data\Address;
+use Notifiable\ReceiveEmail\Data\Mail;
 use Notifiable\ReceiveEmail\Data\Recipients;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
@@ -34,43 +35,52 @@ it('throws exception when text source is not a string', function () {
 it('correctly sets stream source', function () {
     $resource = tmpfile();
 
-    $this->parser->shouldReceive('setStream')
-        ->once()
-        ->with($resource)
-        ->andReturnSelf();
-
     $result = $this->parsedMail->source($resource, Source::Stream);
 
     expect($result)->toBeInstanceOf(ParserParsedMail::class);
 
-    fclose($resource);
-});
+    if (is_resource($resource)) {
+        fclose($resource);
+    }
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
 
 it('correctly sets path source', function () {
-    $path = '/path/to/email.eml';
-
-    $this->parser->shouldReceive('setPath')
-        ->once()
-        ->with($path)
-        ->andReturnSelf();
+    $path = tempnam(sys_get_temp_dir(), 'email_');
+    file_put_contents($path, "From: test@example.com\r\nTo: to@example.com\r\nSubject: Test\r\n\r\nBody");
 
     $result = $this->parsedMail->source($path, Source::Path);
 
     expect($result)->toBeInstanceOf(ParserParsedMail::class);
-});
+
+    unlink($path);
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
 
 it('correctly sets text source', function () {
-    $text = 'email content text';
-
-    $this->parser->shouldReceive('setText')
-        ->once()
-        ->with($text)
-        ->andReturnSelf();
+    $text = "From: test@example.com\r\nTo: to@example.com\r\nSubject: Test\r\n\r\nBody";
 
     $result = $this->parsedMail->source($text, Source::Text);
 
     expect($result)->toBeInstanceOf(ParserParsedMail::class);
-});
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
+
+it('creates an isolated parser for each source call', function () {
+    $resource1 = tmpfile();
+    $resource2 = tmpfile();
+
+    $result1 = $this->parsedMail->source($resource1, Source::Stream);
+    $result2 = $this->parsedMail->source($resource2, Source::Stream);
+
+    expect($result1)->toBeInstanceOf(ParserParsedMail::class)
+        ->and($result2)->toBeInstanceOf(ParserParsedMail::class)
+        ->and($result1)->not->toBe($result2);
+
+    if (is_resource($resource1)) {
+        fclose($resource1);
+    }
+    if (is_resource($resource2)) {
+        fclose($resource2);
+    }
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
 
 it('stores the email correctly', function () {
     $path = 'emails/test-email.eml';
@@ -338,7 +348,7 @@ it('converts to Mail object correctly', function () {
 
     $mail = $this->parsedMail->toMail();
 
-    expect($mail)->toBeInstanceOf(\Notifiable\ReceiveEmail\Data\Mail::class)
+    expect($mail)->toBeInstanceOf(Mail::class)
         ->and($mail->messageId)->toBe($messageId)
         ->and($mail->subject)->toBe($subject)
         ->and($mail->text)->toBe($text)

@@ -1,5 +1,8 @@
 <?php
 
+use Notifiable\ReceiveEmail\ApplyFilters;
+use Notifiable\ReceiveEmail\StoreAndDispatch;
+
 return [
 
     /*
@@ -46,7 +49,7 @@ return [
     |
     */
 
-    'pipe-command' => \Notifiable\ReceiveEmail\StoreAndDispatch::class,
+    'pipe-command' => StoreAndDispatch::class,
 
     /*
     |--------------------------------------------------------------------------
@@ -58,7 +61,7 @@ return [
     |
     */
 
-    'pipe-filter' => \Notifiable\ReceiveEmail\ApplyFilters::class,
+    'pipe-filter' => ApplyFilters::class,
 
     /*
     |--------------------------------------------------------------------------
