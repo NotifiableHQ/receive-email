@@ -20,7 +20,7 @@ use function Notifiable\ReceiveEmail\storage;
  * @property string $message_id
  * @property-read  Sender $sender
  * @property CarbonImmutable $sent_at
- * @property CarbonImmutable $created_at
+ * @property CarbonImmutable|null $created_at
  */
 class Email extends Model
 {
