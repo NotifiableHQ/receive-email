@@ -304,8 +304,13 @@ class SetupPostfixCommand extends ConsoleCommand
 
     private function getReceiveEmailCommand(): string
     {
-        $artisan = base_path('artisan');
+        $basePath = base_path();
 
-        return "php $artisan notifiable:receive-email";
+        // Zero-downtime deployments (Envoyer, Forge) use a releases/ directory
+        // with a `current` symlink. Resolve to the `current` path so Postfix
+        // always calls the active release after future deploys.
+        $basePath = preg_replace('#/releases/[^/]+$#', '/current', $basePath);
+
+        return "php {$basePath}/artisan notifiable:receive-email";
     }
 }
