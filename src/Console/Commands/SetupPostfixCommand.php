@@ -97,11 +97,7 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         // Recipient restrictions
-        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination';
-        $edited = $this->editLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', $smtpdRecipientRestrictions);
-        if ($edited === null) {
-            $this->upsertLine($mainConfig, $smtpdRecipientRestrictions);
-        }
+        $this->upsertOrEditLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination');
 
         $this->upsertLine($mainConfig, 'local_recipient_maps =');
 
@@ -110,11 +106,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->upsertLine($mainConfig, 'relay_transport = error');
 
         // Message size limit
-        $messageSizeLimit = 'message_size_limit = '.config('receive_email.message-size-limit', 26214400);
-        $edited = $this->editLine($mainConfig, '/^message_size_limit = (.*)$/m', $messageSizeLimit);
-        if ($edited === null) {
-            $this->upsertLine($mainConfig, $messageSizeLimit);
-        }
+        $this->upsertOrEditLine($mainConfig, '/^message_size_limit = (.*)$/m', 'message_size_limit = '.config('receive_email.message-size-limit', 26214400));
 
         // HELO restrictions
         $this->upsertLine($mainConfig, 'smtpd_helo_required = yes');
@@ -171,8 +163,8 @@ class SetupPostfixCommand extends ConsoleCommand
                 throw new RuntimeException("TLS key file does not exist: {$tlsKey}");
             }
 
-            $this->upsertLine($mainConfig, "smtpd_tls_cert_file = {$tlsCert}");
-            $this->upsertLine($mainConfig, "smtpd_tls_key_file = {$tlsKey}");
+            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_cert_file = (.*)$/m', "smtpd_tls_cert_file = {$tlsCert}");
+            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_key_file = (.*)$/m', "smtpd_tls_key_file = {$tlsKey}");
             $this->upsertLine($mainConfig, 'smtpd_tls_security_level = may');
             $this->upsertLine($mainConfig, 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1');
             $this->upsertLine($mainConfig, 'smtpd_tls_loglevel = 1');
@@ -204,10 +196,7 @@ class SetupPostfixCommand extends ConsoleCommand
         $concurrency = config('receive_email.pipe-concurrency', 4);
 
         $deliveryMethod = "notifiable unix - n n - {$concurrency} pipe flags=F user=$user argv={$command}";
-        $edited = $this->editLine($masterConfig, '/^notifiable(.*)$/m', $deliveryMethod);
-        if ($edited === null) {
-            $this->upsertLine($masterConfig, $deliveryMethod);
-        }
+        $this->upsertOrEditLine($masterConfig, '/^notifiable(.*)$/m', $deliveryMethod);
     }
 
     /**
@@ -288,6 +277,13 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->line("To:  {$newLine}");
 
         return $originalLine;
+    }
+
+    private function upsertOrEditLine(string $filePath, string $regex, string $newLine): void
+    {
+        if ($this->editLine($filePath, $regex, $newLine) === null) {
+            $this->upsertLine($filePath, $newLine);
+        }
     }
 
     private function upsertLine(string $filePath, string $line): void
