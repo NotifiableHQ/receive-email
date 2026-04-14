@@ -78,20 +78,61 @@ You'll have to show `Advance Settings` to select this.
 
 3. Once you have the server ready, open up `Port 25`, add your site, and deploy your Laravel app.
 
-4. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
+4. Obtain a TLS certificate for your mail domain. If your mail domain differs from your site domain, you can use Certbot:
 ```bash
-sudo php artisan notifiable:setup-postfix domain-that-receives-email.com
+sudo certbot certonly --standalone -d domain-that-receives-email.com
+```
+This places certs at `/etc/letsencrypt/live/domain-that-receives-email.com/fullchain.pem` and `privkey.pem`. If your mail domain is the same as your site domain, you can reuse your existing Forge/Nginx certs instead.
+
+5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
+```bash
+sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
+    --user=forge \
+    --tls-cert=/etc/letsencrypt/live/domain-that-receives-email.com/fullchain.pem \
+    --tls-key=/etc/letsencrypt/live/domain-that-receives-email.com/privkey.pem \
+    --with-spf
 ```
 
-5. Add the following DNS records to your domain:
+> **Important:** Always pass `--user=forge` (or your deploy user) when running with `sudo`. Without it, the pipe transport will run as `root`.
+
+**Available options:**
+
+| Option | Description |
+|--------|-------------|
+| `--user=forge` | The system user Postfix runs the pipe command as. Required when using `sudo`. |
+| `--tls-cert=` | Path to the TLS certificate file (PEM format). Enables opportunistic TLS for inbound SMTP. |
+| `--tls-key=` | Path to the TLS private key file (PEM format). Must be provided together with `--tls-cert`. |
+| `--with-spf` | Installs `postfix-policyd-spf-python` and configures SPF verification for inbound mail. |
+
+6. Add the following DNS records to your domain:
 
     | Type | Host                        | Value                 |
     |------|-----------------------------|-----------------------|
     | A    | your-application-domain.com | your.forge.ip.address |
  
-    | Type | Host                           | Value                | Priority |
-    |------|--------------------------------|----------------------| --- |
-    | MX   | domain-that-receives-email.com | your-application-domain.com | 10 |
+    | Type | Host                           | Value                          | Priority |
+    |------|--------------------------------|--------------------------------|----------|
+    | MX   | domain-that-receives-email.com | your-application-domain.com    | 10       |
+
+    | Type | Host                           | Value                          |
+    |------|--------------------------------|--------------------------------|
+    | TXT  | domain-that-receives-email.com | v=spf1 mx -all                |
+
+    The SPF TXT record tells other mail servers that only your MX host is authorized to send mail for this domain. Even though this is a receive-only server, publishing an SPF record prevents others from spoofing your domain.
+
+## Configuration
+
+After publishing the config file, you can tune the following settings in `config/receive_email.php`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `message-size-limit` | `26214400` (25MB) | Maximum inbound email size in bytes. Written to Postfix's `message_size_limit`. |
+| `pipe-concurrency` | `4` | Maximum concurrent pipe processes. Maps to `maxproc` in `master.cf`. |
+| `storage-disk` | `local` | Filesystem disk for storing raw email files. |
+| `email-table` | `emails` | Table name for the Email model. |
+| `sender-table` | `senders` | Table name for the Sender model. |
+
+To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup command.
 
 ## Research References
 - [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)
