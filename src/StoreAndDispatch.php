@@ -10,12 +10,12 @@ use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
 
-use function Notifiable\ReceiveEmail\storage;
-
 class StoreAndDispatch implements PipeCommandContract
 {
     public function handle(ParsedMailContract $parsedMail): void
     {
+        $email = null;
+
         DB::beginTransaction();
 
         try {
@@ -37,7 +37,7 @@ class StoreAndDispatch implements PipeCommandContract
         } catch (Exception $e) {
             DB::rollBack();
 
-            if (isset($email)) {
+            if ($email !== null) {
                 storage()->delete($email->path());
             }
 
