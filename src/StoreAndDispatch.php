@@ -10,6 +10,8 @@ use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
 
+use function Notifiable\ReceiveEmail\storage;
+
 class StoreAndDispatch implements PipeCommandContract
 {
     public function handle(ParsedMailContract $parsedMail): void
@@ -29,14 +31,18 @@ class StoreAndDispatch implements PipeCommandContract
                 'sent_at' => $parsedMail->date(),
             ]);
 
+            $parsedMail->store($email->path());
+
             DB::commit();
         } catch (Exception $e) {
             DB::rollBack();
 
+            if (isset($email)) {
+                storage()->delete($email->path());
+            }
+
             throw $e;
         }
-
-        $parsedMail->store($email->path());
 
         event(new EmailReceived($email));
     }

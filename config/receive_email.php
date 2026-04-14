@@ -19,6 +19,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Message Size Limit
+    |--------------------------------------------------------------------------
+    |
+    | The maximum size of an incoming email in bytes. This value is written
+    | to Postfix's message_size_limit parameter during setup. The default
+    | of 26214400 bytes (25MB) is generous for most use cases.
+    |
+    */
+
+    'message-size-limit' => 26214400,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pipe Concurrency
+    |--------------------------------------------------------------------------
+    |
+    | The maximum number of concurrent pipe processes Postfix will spawn
+    | for email delivery. This maps to the maxproc field in master.cf.
+    | Lower values protect the server under load; higher values increase
+    | throughput. Start with 2-4 and tune based on server resources.
+    |
+    */
+
+    'pipe-concurrency' => 4,
+
+    /*
+    |--------------------------------------------------------------------------
     | Email Model Table
     |--------------------------------------------------------------------------
     |

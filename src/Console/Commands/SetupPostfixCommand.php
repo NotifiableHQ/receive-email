@@ -16,7 +16,10 @@ class SetupPostfixCommand extends ConsoleCommand
     /** @var string */
     protected $signature = 'notifiable:setup-postfix
         {domain : The domain where to receive emails from.}
-        {--user= : The system user to run the pipe command as.}';
+        {--user= : The system user to run the pipe command as.}
+        {--tls-cert= : Path to the TLS certificate file (PEM format).}
+        {--tls-key= : Path to the TLS private key file (PEM format).}
+        {--with-spf : Install and configure SPF verification via policyd-spf.}';
 
     /** @var string */
     protected $description = 'Install and Configure Postfix to receive emails.';
@@ -40,6 +43,13 @@ class SetupPostfixCommand extends ConsoleCommand
             $this->installPostfix($domain);
             $this->configureMainConfigFile($domain);
             $this->configureMasterConfigFile();
+
+            if ($this->option('with-spf')) {
+                $this->configureSPF();
+            } else {
+                $this->info("\nFor production use, consider --with-spf for SPF verification, and rspamd for DKIM/DMARC.");
+            }
+
             $this->reloadPostfix();
         } catch (RuntimeException $e) {
             $this->error($e->getMessage());
@@ -71,10 +81,7 @@ class SetupPostfixCommand extends ConsoleCommand
     }
 
     /**
-     * Configure the main.cf file:
-     * - Set the domain name
-     * - Add smtpd_recipient_restrictions
-     * - Add local_recipient_maps
+     * Configure the main.cf file.
      */
     private function configureMainConfigFile(string $domain): void
     {
@@ -89,16 +96,95 @@ class SetupPostfixCommand extends ConsoleCommand
             throw new RuntimeException("'myhostname' is missing from {$mainConfig}.");
         }
 
-        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination';
-        $localRecipientMaps = 'local_recipient_maps =';
-        $this->upsertLine($mainConfig, $smtpdRecipientRestrictions);
-        $this->upsertLine($mainConfig, $localRecipientMaps);
+        // Recipient restrictions
+        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination';
+        $edited = $this->editLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', $smtpdRecipientRestrictions);
+        if ($edited === null) {
+            $this->upsertLine($mainConfig, $smtpdRecipientRestrictions);
+        }
+
+        $this->upsertLine($mainConfig, 'local_recipient_maps =');
+
+        // Disable outbound delivery (receive-only)
+        $this->upsertLine($mainConfig, 'default_transport = error');
+        $this->upsertLine($mainConfig, 'relay_transport = error');
+
+        // Message size limit
+        $messageSizeLimit = 'message_size_limit = '.config('receive_email.message-size-limit', 26214400);
+        $edited = $this->editLine($mainConfig, '/^message_size_limit = (.*)$/m', $messageSizeLimit);
+        if ($edited === null) {
+            $this->upsertLine($mainConfig, $messageSizeLimit);
+        }
+
+        // HELO restrictions
+        $this->upsertLine($mainConfig, 'smtpd_helo_required = yes');
+        $this->upsertLine($mainConfig, 'smtpd_helo_restrictions = reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
+
+        // Sender restrictions
+        $this->upsertLine($mainConfig, 'smtpd_sender_restrictions = reject_non_fqdn_sender, reject_unknown_sender_domain');
+
+        // Disable VRFY
+        $this->upsertLine($mainConfig, 'disable_vrfy_command = yes');
+
+        // Hide version from banner
+        $this->upsertLine($mainConfig, 'smtpd_banner = $myhostname ESMTP');
+
+        // Rate limiting
+        $this->upsertLine($mainConfig, 'smtpd_client_connection_rate_limit = 30');
+        $this->upsertLine($mainConfig, 'smtpd_client_message_rate_limit = 60');
+        $this->upsertLine($mainConfig, 'smtpd_client_recipient_rate_limit = 120');
+        $this->upsertLine($mainConfig, 'smtpd_error_sleep_time = 1s');
+        $this->upsertLine($mainConfig, 'smtpd_soft_error_limit = 5');
+        $this->upsertLine($mainConfig, 'smtpd_hard_error_limit = 10');
+
+        // Data restrictions
+        $this->upsertLine($mainConfig, 'smtpd_data_restrictions = reject_unauth_pipelining');
+
+        // Timeout hardening
+        $this->upsertLine($mainConfig, 'smtpd_timeout = 120s');
+
+        // Queue lifetimes
+        $this->upsertLine($mainConfig, 'maximal_queue_lifetime = 1d');
+        $this->upsertLine($mainConfig, 'bounce_queue_lifetime = 1d');
+
+        // TLS configuration
+        $this->configureTLS($mainConfig);
     }
 
     /**
-     * Configure the master.cf file:
-     * - Add SMTP daemon
-     * - Add external delivery method
+     * Configure TLS if cert and key are provided.
+     */
+    private function configureTLS(string $mainConfig): void
+    {
+        /** @var string|null $tlsCert */
+        $tlsCert = $this->option('tls-cert');
+
+        /** @var string|null $tlsKey */
+        $tlsKey = $this->option('tls-key');
+
+        if ($tlsCert && $tlsKey) {
+            if (! file_exists($tlsCert)) {
+                throw new RuntimeException("TLS certificate file does not exist: {$tlsCert}");
+            }
+
+            if (! file_exists($tlsKey)) {
+                throw new RuntimeException("TLS key file does not exist: {$tlsKey}");
+            }
+
+            $this->upsertLine($mainConfig, "smtpd_tls_cert_file = {$tlsCert}");
+            $this->upsertLine($mainConfig, "smtpd_tls_key_file = {$tlsKey}");
+            $this->upsertLine($mainConfig, 'smtpd_tls_security_level = may');
+            $this->upsertLine($mainConfig, 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1');
+            $this->upsertLine($mainConfig, 'smtpd_tls_loglevel = 1');
+            $this->upsertLine($mainConfig, 'smtp_tls_security_level = none');
+        } else {
+            $this->warn('TLS is not configured. Inbound SMTP connections will be unencrypted.');
+            $this->warn('Use --tls-cert and --tls-key to enable TLS.');
+        }
+    }
+
+    /**
+     * Configure the master.cf file.
      */
     private function configureMasterConfigFile(): void
     {
@@ -115,9 +201,33 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $user = $this->resolveUser();
         $command = $this->getReceiveEmailCommand();
+        $concurrency = config('receive_email.pipe-concurrency', 4);
 
-        $deliveryMethod = "notifiable unix - n n - - pipe flags=F user=$user argv={$command}";
-        $this->upsertLine($masterConfig, $deliveryMethod);
+        $deliveryMethod = "notifiable unix - n n - {$concurrency} pipe flags=F user=$user argv={$command}";
+        $edited = $this->editLine($masterConfig, '/^notifiable(.*)$/m', $deliveryMethod);
+        if ($edited === null) {
+            $this->upsertLine($masterConfig, $deliveryMethod);
+        }
+    }
+
+    /**
+     * Install and configure SPF verification.
+     */
+    private function configureSPF(): void
+    {
+        $this->info("\nConfiguring SPF verification\n");
+
+        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python'));
+
+        $mainConfig = $this->getConfigPath('main.cf');
+        $this->upsertLine($mainConfig, 'policy-spf_time_limit = 3600s');
+
+        // Update smtpd_recipient_restrictions to include SPF check
+        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination, check_policy_service unix:private/policy-spf';
+        $this->editLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', $smtpdRecipientRestrictions);
+
+        $masterConfig = $this->getConfigPath('master.cf');
+        $this->upsertLine($masterConfig, 'policy-spf unix -  n  n  -  0  spawn user=policyd-spf argv=/usr/bin/policyd-spf');
     }
 
     private function resolveUser(): string

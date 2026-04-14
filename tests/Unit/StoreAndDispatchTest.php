@@ -54,6 +54,32 @@ it('stores incoming email and dispatches event', function () {
     });
 });
 
+it('stores the file before committing the database transaction', function () {
+    Event::fake();
+
+    $messageId = '<order-test@example.com>';
+    $date = CarbonImmutable::now();
+    $sender = new Address('sender@example.com', 'Sender');
+
+    $storeCalledBeforeCommit = false;
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn($messageId);
+    $mockParsedMail->shouldReceive('date')->andReturn($date);
+    $mockParsedMail->shouldReceive('sender')->andReturn($sender);
+    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function () use (&$storeCalledBeforeCommit) {
+        // If we can query the email but it's not yet committed, store was called inside the transaction
+        $storeCalledBeforeCommit = DB::transactionLevel() > 0;
+
+        return true;
+    });
+
+    $storeAndDispatch = new StoreAndDispatch;
+    $storeAndDispatch->handle($mockParsedMail);
+
+    expect($storeCalledBeforeCommit)->toBeTrue();
+});
+
 it('rolls back transaction on error', function () {
     DB::shouldReceive('beginTransaction')->once();
     DB::shouldReceive('commit')->never();
@@ -72,4 +98,28 @@ it('rolls back transaction on error', function () {
 
     expect(fn () => $storeAndDispatch->handle($mockParsedMail))
         ->toThrow(Exception::class, 'Test exception');
+});
+
+it('rolls back database when store fails', function () {
+    Event::fake();
+
+    $messageId = '<store-fail@example.com>';
+    $date = CarbonImmutable::now();
+    $sender = new Address('sender@example.com', 'Sender');
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn($messageId);
+    $mockParsedMail->shouldReceive('date')->andReturn($date);
+    $mockParsedMail->shouldReceive('sender')->andReturn($sender);
+    $mockParsedMail->shouldReceive('store')->once()->andThrow(new RuntimeException('Disk full'));
+
+    $storeAndDispatch = new StoreAndDispatch;
+
+    expect(fn () => $storeAndDispatch->handle($mockParsedMail))
+        ->toThrow(RuntimeException::class, 'Disk full');
+
+    $this->assertDatabaseMissing('senders', ['address' => 'sender@example.com']);
+    $this->assertDatabaseMissing('emails', ['message_id' => $messageId]);
+
+    Event::assertNotDispatched(EmailReceived::class);
 });
