@@ -78,18 +78,16 @@ You'll have to show `Advance Settings` to select this.
 
 3. Once you have the server ready, open up `Port 25`, add your site, and deploy your Laravel app.
 
-4. Obtain a TLS certificate for your mail domain. If your mail domain differs from your site domain, you can use Certbot:
-```bash
-sudo certbot certonly --standalone -d domain-that-receives-email.com
-```
-This places certs at `/etc/letsencrypt/live/domain-that-receives-email.com/fullchain.pem` and `privkey.pem`. If your mail domain is the same as your site domain, you can reuse your existing Forge/Nginx certs instead.
+4. Activate an SSL certificate for your site in Forge (Sites > your site > SSL). Forge uses Let's Encrypt and places certs at:
+    - Certificate: `/etc/nginx/ssl/your-application-domain.com/server.crt`
+    - Private key: `/etc/nginx/ssl/your-application-domain.com/server.key`
 
 5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
 ```bash
 sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
     --user=forge \
-    --tls-cert=/etc/letsencrypt/live/domain-that-receives-email.com/fullchain.pem \
-    --tls-key=/etc/letsencrypt/live/domain-that-receives-email.com/privkey.pem \
+    --tls-cert=/etc/nginx/ssl/your-application-domain.com/server.crt \
+    --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key \
     --with-spf
 ```
 
