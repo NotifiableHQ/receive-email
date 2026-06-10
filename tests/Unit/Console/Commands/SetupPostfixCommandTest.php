@@ -216,8 +216,12 @@ describe('postfix config values', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
+        // bounce_queue_lifetime governs all null-Envelope-Sender mail,
+        // including accepted inbound DSNs, so it matches
+        // maximal_queue_lifetime instead of deleting that mail after a
+        // single tempfailed delivery attempt.
         Process::assertRan("postconf -e 'maximal_queue_lifetime = 5d'");
-        Process::assertRan("postconf -e 'bounce_queue_lifetime = 0'");
+        Process::assertRan("postconf -e 'bounce_queue_lifetime = 5d'");
     });
 
     it('skips writing a parameter whose current value already matches', function () {
@@ -227,7 +231,7 @@ describe('postfix config values', function () {
             ->assertSuccessful();
 
         Process::assertDidntRun("postconf -e 'maximal_queue_lifetime = 5d'");
-        Process::assertRan("postconf -e 'bounce_queue_lifetime = 0'");
+        Process::assertRan("postconf -e 'bounce_queue_lifetime = 5d'");
     });
 
     it('repeats no parameter writes on an unchanged re-run', function () {
@@ -238,7 +242,7 @@ describe('postfix config values', function () {
 
         Process::assertRanTimes("postconf -e 'myhostname = example.com'", 1);
         Process::assertRanTimes("postconf -e 'maximal_queue_lifetime = 5d'", 1);
-        Process::assertRanTimes("postconf -e 'bounce_queue_lifetime = 0'", 1);
+        Process::assertRanTimes("postconf -e 'bounce_queue_lifetime = 5d'", 1);
     });
 
     it('writes the TLS configuration when cert and key are provided', function () {

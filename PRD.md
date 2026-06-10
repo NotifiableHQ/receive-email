@@ -290,11 +290,11 @@ And a timeout to prevent slowloris-style SMTP attacks:
 smtpd_timeout = 120s
 ```
 
-And shorter queue lifetimes since a receive-only server shouldn't retry for 5 days (the default):
+And explicit queue lifetimes. (Superseded in review: both stay at `5d` — the queue is the durability buffer for tempfailed inbound mail, so the retry window must outlive a multi-day incident, and `bounce_queue_lifetime` governs *all* null-Envelope-Sender mail, including accepted inbound DSNs.)
 
 ```
-maximal_queue_lifetime = 1d
-bounce_queue_lifetime = 1d
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 5d
 ```
 
 These values are NOT made configurable — they are sensible defaults for a receive-only server and don't need per-deployment tuning in the same way that message size or concurrency do.
@@ -308,8 +308,8 @@ These values are NOT made configurable — they are sensible defaults for a rece
 - `smtpd_hard_error_limit = 10` — After 10 hard errors, disconnect the client.
 - `smtpd_data_restrictions = reject_unauth_pipelining` — Blocks clients that send commands before receiving the server's response (common spam technique).
 - `smtpd_timeout = 120s` — Disconnect clients that idle for 2 minutes.
-- `maximal_queue_lifetime = 1d` — Don't retry undeliverable messages for more than 1 day.
-- `bounce_queue_lifetime = 1d` — Don't retry bounce messages for more than 1 day.
+- `maximal_queue_lifetime = 5d` — Keep retrying tempfailed messages for up to 5 days; the queue is the durability buffer for accepted mail.
+- `bounce_queue_lifetime = 5d` — Applies to all mail with a null envelope sender — including accepted inbound DSNs, not just bounces — so it matches `maximal_queue_lifetime`.
 
 ### Acceptance Criteria
 - All 10 parameters above are written to `main.cf` during setup

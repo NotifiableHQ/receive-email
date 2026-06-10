@@ -160,11 +160,14 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->setMainParameter('smtpd_timeout', '120s');
 
         // Queue lifetimes: the queue is the durability buffer for tempfailed
-        // mail, so the retry window must outlive a multi-day incident. Bounces
-        // can never be delivered on this receive-only server, so dead bounce
-        // messages are deleted immediately.
+        // mail, so the retry window must outlive a multi-day incident.
+        // bounce_queue_lifetime governs ALL mail with a null Envelope Sender
+        // — including inbound DSNs accepted through the whitelist <>
+        // exemption, not just locally generated bounces — so it must match
+        // maximal_queue_lifetime: at 0, a single pipe tempfail would destroy
+        // accepted mail after one delivery attempt.
         $this->setMainParameter('maximal_queue_lifetime', '5d');
-        $this->setMainParameter('bounce_queue_lifetime', '0');
+        $this->setMainParameter('bounce_queue_lifetime', '5d');
 
         // TLS configuration
         $this->configureTLS();
