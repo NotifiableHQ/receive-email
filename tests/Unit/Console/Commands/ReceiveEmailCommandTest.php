@@ -7,10 +7,65 @@ use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmailCommand;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
+use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use Notifiable\ReceiveEmail\Support\Testing\FakeParsedMail;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\NullOutput;
+
+/**
+ * Run the command against an in-memory input stream instead of php://stdin.
+ */
+function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello"): int
+{
+    $stream = fopen('php://memory', 'r+');
+
+    assert($stream !== false);
+
+    fwrite($stream, $input);
+    rewind($stream);
+
+    $command = new class($stream) extends ReceiveEmailCommand
+    {
+        /**
+         * @param  resource  $stream
+         */
+        public function __construct(private $stream)
+        {
+            parent::__construct();
+        }
+
+        protected function inputStream()
+        {
+            return $this->stream;
+        }
+    };
+
+    $command->setLaravel(app());
+
+    return $command->run(new ArrayInput([]), new NullOutput);
+}
+
+/**
+ * A FakeParsedMail that records the contents handed to source().
+ */
+function recordingParsedMailFake(): FakeParsedMail
+{
+    return new class extends FakeParsedMail
+    {
+        public ?string $sourceContents = null;
+
+        public function source($source, Source $type = Source::Stream): ParsedMailContract
+        {
+            $this->sourceContents = is_resource($source) ? (string) stream_get_contents($source) : $source;
+
+            return $this;
+        }
+    };
+}
 
 it('processes normal mail and exits EX_OK', function () {
     Event::fake();
@@ -20,9 +75,26 @@ it('processes normal mail and exits EX_OK', function () {
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
-    $exitCode = $this->artisan('notifiable:receive-email')->run();
+    $exitCode = runReceiveEmailCommand();
 
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+    Event::assertDispatched(EmailReceived::class);
+});
+
+it('passes the full input through to the parser unchanged', function () {
+    Event::fake();
+
+    $fake = recordingParsedMailFake()->fake([
+        'stored' => true,
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+    ParsedMail::swap($fake);
+
+    $input = "Subject: Test\r\n\r\nHello";
+    $exitCode = runReceiveEmailCommand($input);
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and($fake->sourceContents)->toBe($input);
     Event::assertDispatched(EmailReceived::class);
 });
 
@@ -46,7 +118,7 @@ it('discards filter-rejected mail with EX_OK after dispatching EmailRejected', f
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
-    $exitCode = $this->artisan('notifiable:receive-email')->run();
+    $exitCode = runReceiveEmailCommand();
 
     // Discard: never EX_NOHOST (68), which would ask Postfix for a bounce
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
@@ -63,7 +135,7 @@ it('discards malformed mail with EX_OK and logs the discard', function () {
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
-    $exitCode = $this->artisan('notifiable:receive-email')->run();
+    $exitCode = runReceiveEmailCommand();
 
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
     Event::assertNotDispatched(EmailReceived::class);
@@ -91,7 +163,7 @@ it('exits EX_TEMPFAIL when the pipe command fails unexpectedly', function () {
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
-    $exitCode = $this->artisan('notifiable:receive-email')->run();
+    $exitCode = runReceiveEmailCommand();
 
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL);
     Event::assertNotDispatched(EmailReceived::class);
@@ -112,8 +184,42 @@ it('exits EX_TEMPFAIL when the pipe filter is misconfigured', function () {
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
-    $exitCode = $this->artisan('notifiable:receive-email')->run();
+    $exitCode = runReceiveEmailCommand();
 
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL);
     Log::shouldHaveReceived('error')->once();
+});
+
+it('exits EX_TEMPFAIL without parsing when input exceeds the message-size-limit', function () {
+    Event::fake();
+    Log::spy();
+    Config::set('receive_email.message-size-limit', 1024);
+
+    $fake = recordingParsedMailFake();
+    ParsedMail::swap($fake);
+
+    $exitCode = runReceiveEmailCommand(str_repeat('a', 1025));
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL)
+        ->and($fake->sourceContents)->toBeNull();
+    Event::assertNotDispatched(EmailReceived::class);
+    Event::assertNotDispatched(EmailRejected::class);
+    Log::shouldHaveReceived('error')->once();
+});
+
+it('processes mail exactly at the message-size-limit', function () {
+    Event::fake();
+    Config::set('receive_email.message-size-limit', 1024);
+
+    $fake = recordingParsedMailFake()->fake([
+        'stored' => true,
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+    ParsedMail::swap($fake);
+
+    $exitCode = runReceiveEmailCommand(str_repeat('a', 1024));
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and(strlen((string) $fake->sourceContents))->toBe(1024);
+    Event::assertDispatched(EmailReceived::class);
 });
