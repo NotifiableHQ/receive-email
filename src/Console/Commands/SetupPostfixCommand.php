@@ -159,9 +159,12 @@ class SetupPostfixCommand extends ConsoleCommand
         // Timeout hardening
         $this->upsertLine($mainConfig, 'smtpd_timeout = 120s');
 
-        // Queue lifetimes
-        $this->upsertLine($mainConfig, 'maximal_queue_lifetime = 1d');
-        $this->upsertLine($mainConfig, 'bounce_queue_lifetime = 1d');
+        // Queue lifetimes: the queue is the durability buffer for tempfailed
+        // mail, so the retry window must outlive a multi-day incident. Bounces
+        // can never be delivered on this receive-only server, so dead bounce
+        // messages are deleted immediately.
+        $this->upsertOrEditLine($mainConfig, '/^maximal_queue_lifetime = (.*)$/m', 'maximal_queue_lifetime = 5d');
+        $this->upsertOrEditLine($mainConfig, '/^bounce_queue_lifetime = (.*)$/m', 'bounce_queue_lifetime = 0');
 
         // TLS configuration
         $this->configureTLS($mainConfig);
@@ -190,7 +193,8 @@ class SetupPostfixCommand extends ConsoleCommand
             $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_cert_file = (.*)$/m', "smtpd_tls_cert_file = {$tlsCert}");
             $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_key_file = (.*)$/m', "smtpd_tls_key_file = {$tlsKey}");
             $this->upsertLine($mainConfig, 'smtpd_tls_security_level = may');
-            $this->upsertLine($mainConfig, 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1');
+            // ">=TLSv1.2" requires Postfix 3.6+; Ubuntu 24.04 ships 3.8.
+            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_protocols = (.*)$/m', 'smtpd_tls_protocols = >=TLSv1.2');
             $this->upsertLine($mainConfig, 'smtpd_tls_loglevel = 1');
             $this->upsertLine($mainConfig, 'smtp_tls_security_level = none');
         } else {

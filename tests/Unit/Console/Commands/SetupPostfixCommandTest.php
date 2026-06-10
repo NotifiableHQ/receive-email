@@ -180,6 +180,83 @@ describe('preflight checks', function () {
     });
 });
 
+describe('postfix config values', function () {
+    it('writes the queue lifetime values to main.cf', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))
+            ->toContain('maximal_queue_lifetime = 5d')
+            ->toContain('bounce_queue_lifetime = 0');
+    });
+
+    it('replaces existing queue lifetime values instead of appending', function () {
+        file_put_contents(
+            $this->postfixDir.'/main.cf',
+            "myhostname = old.example.com\nmaximal_queue_lifetime = 1d\nbounce_queue_lifetime = 1d\n"
+        );
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
+
+        expect($mainConfig)
+            ->toContain('maximal_queue_lifetime = 5d')
+            ->toContain('bounce_queue_lifetime = 0');
+        expect(substr_count($mainConfig, 'maximal_queue_lifetime ='))->toBe(1);
+        expect(substr_count($mainConfig, 'bounce_queue_lifetime ='))->toBe(1);
+    });
+
+    it('replaces the exclusion-list TLS protocols line with >=TLSv1.2 when TLS is configured', function () {
+        file_put_contents(
+            $this->postfixDir.'/main.cf',
+            "myhostname = old.example.com\nsmtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1\n"
+        );
+        file_put_contents($this->postfixDir.'/server.crt', 'cert');
+        file_put_contents($this->postfixDir.'/server.key', 'key');
+
+        $this->artisan('notifiable:setup-postfix', [
+            'domain' => 'example.com',
+            '--user' => 'deploy',
+            '--tls-cert' => $this->postfixDir.'/server.crt',
+            '--tls-key' => $this->postfixDir.'/server.key',
+        ])->assertSuccessful();
+
+        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
+
+        expect($mainConfig)->toContain('smtpd_tls_protocols = >=TLSv1.2');
+        expect(substr_count($mainConfig, 'smtpd_tls_protocols ='))->toBe(1);
+
+        @unlink($this->postfixDir.'/server.crt');
+        @unlink($this->postfixDir.'/server.key');
+    });
+
+    it('keeps the queue lifetime and TLS protocol lines single across re-runs', function () {
+        file_put_contents($this->postfixDir.'/server.crt', 'cert');
+        file_put_contents($this->postfixDir.'/server.key', 'key');
+
+        $arguments = [
+            'domain' => 'example.com',
+            '--user' => 'deploy',
+            '--tls-cert' => $this->postfixDir.'/server.crt',
+            '--tls-key' => $this->postfixDir.'/server.key',
+        ];
+
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+
+        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
+
+        expect(substr_count($mainConfig, 'maximal_queue_lifetime ='))->toBe(1);
+        expect(substr_count($mainConfig, 'bounce_queue_lifetime ='))->toBe(1);
+        expect(substr_count($mainConfig, 'smtpd_tls_protocols ='))->toBe(1);
+
+        @unlink($this->postfixDir.'/server.crt');
+        @unlink($this->postfixDir.'/server.key');
+    });
+});
+
 describe('postflight checks', function () {
     it('aborts before reloading Postfix when postfix check fails', function () {
         Process::fake([
