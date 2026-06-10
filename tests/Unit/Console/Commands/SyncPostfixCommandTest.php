@@ -1,7 +1,21 @@
 <?php
 
+use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
 use Notifiable\ReceiveEmail\Support\PostfixDirectory;
+
+/**
+ * Fakes a successful postmap run that, like the real one, builds the
+ * indexed .db file next to the map it was given.
+ */
+function fakePostmap(): Closure
+{
+    return function (PendingProcess $process) {
+        touch(str((string) $process->command)->after('hash:')->value().'.db');
+
+        return Process::result();
+    };
+}
 
 beforeEach(function () {
     $this->postfixDir = sys_get_temp_dir().'/postfix-sync-test-'.uniqid();
@@ -15,7 +29,7 @@ beforeEach(function () {
     $this->blacklistCheck = 'check_sender_access hash:'.$this->postfixDir.'/notifiable_sender_blacklist';
 
     Process::fake([
-        'postmap *' => Process::result(),
+        'postmap *' => fakePostmap(),
         'systemctl reload postfix' => Process::result(),
         '*' => Process::result(),
     ]);
@@ -24,8 +38,8 @@ beforeEach(function () {
 afterEach(function () {
     PostfixDirectory::$path = PostfixDirectory::DEFAULT;
 
-    foreach (['main.cf', 'notifiable_sender_whitelist', 'notifiable_sender_blacklist'] as $file) {
-        @unlink($this->postfixDir.'/'.$file);
+    foreach (glob($this->postfixDir.'/*') ?: [] as $file) {
+        @unlink($file);
     }
     @rmdir($this->postfixDir);
 });
@@ -42,8 +56,8 @@ it('renders empty maps and the open restriction shape when no lists are configur
         ->toContain('smtpd_sender_restrictions = reject_non_fqdn_sender, reject_unknown_sender_domain')
         ->not->toContain('check_sender_access');
 
-    Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_whitelist');
-    Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist');
+    Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_whitelist.tmp');
+    Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist.tmp');
 });
 
 it('renders a blacklist-only configuration with the open restriction shape', function () {
@@ -74,6 +88,28 @@ it('renders a whitelist-only configuration with the default-reject restriction s
     expect(file_get_contents($this->postfixDir.'/main.cf'))->toContain(
         "smtpd_sender_restrictions = {$this->whitelistCheck}, reject_non_fqdn_sender, reject_unknown_sender_domain, reject\n"
     );
+});
+
+it('exempts the null Envelope Sender in the whitelist map', function () {
+    config()->set('receive_email.sender-domain-whitelist', ['trusted.test']);
+
+    $this->artisan('notifiable:sync-postfix')->assertSuccessful();
+
+    // RFC 5321 §4.5.5: the default-reject shape must keep MAIL FROM:<>
+    // (remote bounces/DSNs) deliverable; `<>` is the
+    // smtpd_null_access_lookup_key Postfix uses for the null sender.
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_whitelist'))
+        ->toContain("<>\tOK")
+        ->toContain("trusted.test\tOK");
+});
+
+it('renders no null-sender exemption when no whitelist is configured', function () {
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    $this->artisan('notifiable:sync-postfix')->assertSuccessful();
+
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_whitelist'))->not->toContain('<>');
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))->not->toContain('<>');
 });
 
 it('renders a mixed configuration with the blacklist consulted before the whitelist', function () {
@@ -163,4 +199,39 @@ it('aborts when postmap fails', function () {
         ->assertFailed();
 
     Process::assertDidntRun('systemctl reload postfix');
+});
+
+it('rebuilds the access map on the next run after a failed postmap', function () {
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    $this->artisan('notifiable:sync-postfix')->assertSuccessful();
+
+    // The list changes but the indexed rebuild fails: the live map must
+    // keep its previous content so the next run retries the build instead
+    // of trusting the stale .db and reporting "already up to date".
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test', 'worse.test']);
+
+    Process::fake([
+        'postmap *' => Process::result(errorOutput: 'postmap: fatal: out of memory', exitCode: 1),
+    ]);
+
+    $this->artisan('notifiable:sync-postfix')->assertFailed();
+
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))
+        ->not->toContain('worse.test');
+
+    Process::fake([
+        'postmap *' => fakePostmap(),
+        'systemctl reload postfix' => Process::result(),
+        '*' => Process::result(),
+    ]);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->doesntExpectOutputToContain('already up to date')
+        ->assertSuccessful();
+
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))
+        ->toContain("worse.test\tREJECT");
+
+    Process::assertRan('systemctl reload postfix');
 });
