@@ -82,7 +82,7 @@ You'll have to show `Advance Settings` to select this.
     - Certificate: `/etc/nginx/ssl/your-application-domain.com/server.crt`
     - Private key: `/etc/nginx/ssl/your-application-domain.com/server.key`
 
-5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
+5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`. The command verifies it is running as root on Ubuntu 24.04+ before changing anything:
 ```bash
 sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
     --tls-cert=/etc/nginx/ssl/your-application-domain.com/server.crt \
@@ -98,6 +98,7 @@ sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
 | `--tls-cert=` | Path to the TLS certificate file (PEM format). Enables opportunistic TLS for inbound SMTP. |
 | `--tls-key=` | Path to the TLS private key file (PEM format). Must be provided together with `--tls-cert`. |
 | `--with-spf` | Installs `postfix-policyd-spf-python` and configures SPF verification for inbound mail. |
+| `--force` | Skips the Ubuntu 24.04+ operating system check, for other Debian-like systems. |
 
 6. Add the following DNS records to your domain:
 

@@ -17,6 +17,18 @@ class SetupPostfixCommand extends ConsoleCommand
      */
     public static string $postfixDirectory = self::POSTFIX_DIR;
 
+    /**
+     * The os-release file consulted by the operating system preflight check.
+     * Overridable in tests.
+     */
+    public static string $osReleasePath = '/etc/os-release';
+
+    /**
+     * Overrides the effective user id consulted by the root preflight check.
+     * For tests only; null means the real effective user id.
+     */
+    public static ?int $effectiveUserId = null;
+
     private const DOMAIN_PATTERN = '/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/';
 
     /** @var string */
@@ -25,7 +37,8 @@ class SetupPostfixCommand extends ConsoleCommand
         {--user= : The system user to run the pipe command as. Defaults to $SUDO_USER, then the current user.}
         {--tls-cert= : Path to the TLS certificate file (PEM format).}
         {--tls-key= : Path to the TLS private key file (PEM format).}
-        {--with-spf : Install and configure SPF verification via policyd-spf.}';
+        {--with-spf : Install and configure SPF verification via policyd-spf.}
+        {--force : Skip the operating system requirement check (Ubuntu 24.04+).}';
 
     /** @var string */
     protected $description = 'Install and Configure Postfix to receive emails.';
@@ -46,6 +59,8 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         try {
+            $this->assertRunningAsRoot();
+            $this->assertSupportedOperatingSystem();
             $user = $this->resolvePipeUser();
 
             $this->installPostfix($domain);
@@ -58,6 +73,7 @@ class SetupPostfixCommand extends ConsoleCommand
                 $this->info("\nFor production use, consider --with-spf for SPF verification, and rspamd for DKIM/DMARC.");
             }
 
+            $this->verifyPostfixConfiguration($domain);
             $this->reloadPostfix();
         } catch (RuntimeException $e) {
             $this->error($e->getMessage());
@@ -227,6 +243,110 @@ class SetupPostfixCommand extends ConsoleCommand
     }
 
     /**
+     * Setup installs packages and edits the Postfix configuration,
+     * so it must run as the effective root user — abort before
+     * anything is mutated.
+     */
+    private function assertRunningAsRoot(): void
+    {
+        $effectiveUserId = static::$effectiveUserId
+            ?? (function_exists('posix_geteuid') ? posix_geteuid() : null);
+
+        if ($effectiveUserId !== 0) {
+            throw new RuntimeException(
+                'This command must be run as root: it installs packages and edits '.static::$postfixDirectory.'. '
+                .'Re-run as `sudo php artisan notifiable:setup-postfix`.'
+            );
+        }
+    }
+
+    /**
+     * The supported deployment platform is Ubuntu 24.04+. Other Debian-like
+     * systems may work; --force skips the check for those.
+     */
+    private function assertSupportedOperatingSystem(): void
+    {
+        if ($this->option('force')) {
+            $this->warn('Skipping the operating system check (--force).');
+
+            return;
+        }
+
+        $osRelease = $this->readOsRelease();
+
+        $id = $osRelease['ID'] ?? 'unknown';
+        $versionId = $osRelease['VERSION_ID'] ?? '0';
+
+        if ($id !== 'ubuntu' || version_compare($versionId, '24.04', '<')) {
+            throw new RuntimeException(
+                "Unsupported operating system: {$id} {$versionId}. This package supports Ubuntu 24.04+. "
+                .'Pass --force to attempt setup on other Debian-like systems.'
+            );
+        }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function readOsRelease(): array
+    {
+        $path = static::$osReleasePath;
+
+        if (! file_exists($path)) {
+            throw new RuntimeException(
+                "Cannot detect the operating system: {$path} does not exist. This package supports Ubuntu 24.04+. "
+                .'Pass --force to attempt setup on other Debian-like systems.'
+            );
+        }
+
+        $content = file_get_contents($path);
+
+        if ($content === false) {
+            throw new RuntimeException("Failed to read file: {$path}");
+        }
+
+        $fields = [];
+
+        foreach (explode("\n", $content) as $line) {
+            if (preg_match('/^([A-Z_]+)="?([^"]*)"?$/', trim($line), $matches)) {
+                $fields[$matches[1]] = $matches[2];
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Verify the resulting configuration before reloading Postfix. A
+     * pre-installed Postfix can carry a foreign mydestination that would
+     * greet senders with "relay access denied" for the receiving domain.
+     */
+    private function verifyPostfixConfiguration(string $domain): void
+    {
+        $this->info("\nVerifying the Postfix configuration\n");
+
+        $check = Process::run('postfix check');
+
+        if (! $check->successful()) {
+            throw new RuntimeException(
+                '`postfix check` failed; not reloading Postfix: '.trim($check->output().' '.$check->errorOutput())
+            );
+        }
+
+        $mydestination = trim(Process::run('postconf -x mydestination')->output());
+
+        $destinations = preg_split('/[\s,]+/', trim((string) str($mydestination)->after('='))) ?: [];
+
+        if (! in_array($domain, $destinations, true)) {
+            throw new RuntimeException(
+                "mydestination does not include {$domain} (got `{$mydestination}`), so Postfix would refuse its mail "
+                ."with \"relay access denied\". Fix it with `postconf -e 'mydestination = {$domain}, localhost'` "
+                .'and re-run this command.'
+            );
+        }
+    }
+
+    /**
      * Resolve the system user the pipe command runs as: the --user option,
      * then $SUDO_USER, then the current user. Postfix refuses to execute
      * pipe commands as a privileged user, so resolving to root must abort
@@ -299,7 +419,9 @@ class SetupPostfixCommand extends ConsoleCommand
         /** @var string $originalLine */
         $originalLine = Arr::first($matches);
 
-        file_put_contents($filePath, str_replace($originalLine, $newLine, $content));
+        if (@file_put_contents($filePath, str_replace($originalLine, $newLine, $content)) === false) {
+            throw new RuntimeException("Failed to write file: {$filePath}");
+        }
 
         $this->line("--- Editing {$filePath} ---");
         $this->line("From: {$originalLine}");
@@ -327,7 +449,10 @@ class SetupPostfixCommand extends ConsoleCommand
             return;
         }
 
-        file_put_contents($filePath, "\n$line\n", FILE_APPEND);
+        if (@file_put_contents($filePath, "\n$line\n", FILE_APPEND) === false) {
+            throw new RuntimeException("Failed to write file: {$filePath}");
+        }
+
         $this->line("Append to {$filePath} : {$line}");
     }
 
