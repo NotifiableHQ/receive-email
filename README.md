@@ -118,6 +118,63 @@ sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
 
     The SPF TXT record tells other mail servers that only your MX host is authorized to send mail for this domain. Even though this is a receive-only server, publishing an SPF record prevents others from spoofing your domain.
 
+## Observing SMTP-time Rejections
+
+Mail refused during the SMTP transaction (sender lists, SPF, HELO checks, rate limits, postscreen) never reaches your application — Postfix rejects it before pipe delivery. The mail-log importer closes that visibility gap: it tails the Postfix mail log from a persisted offset, parses reject events, and dispatches a `Notifiable\ReceiveEmail\Events\SmtpRejectionObserved` event for each one. Log rotation is detected automatically (the importer restarts from the new file), and unparseable reject lines are skipped and counted, never fatal.
+
+### 1. Give the app user read access to the mail log
+
+On Ubuntu, `/var/log/mail.log` is owned by `syslog:adm`. Add your app user (e.g. `forge`) to the `adm` group:
+
+```bash
+sudo usermod -aG adm forge
+```
+
+Group membership takes effect on the next login; restart long-running processes (queue workers, the scheduler daemon) so they pick it up.
+
+### 2. Schedule the importer
+
+Register the command in `routes/console.php`:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('notifiable:import-mail-log')
+    ->everyMinute()
+    ->withoutOverlapping();
+```
+
+Each run resumes from the previous offset, so a rejection is observed exactly once. You can also run it manually with `php artisan notifiable:import-mail-log`.
+
+### 3. Listen for rejections
+
+```php
+use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
+
+class RecordSmtpRejection
+{
+    public function handle(SmtpRejectionObserved $event): void
+    {
+        $rejection = $event->rejection;
+
+        $rejection->timestamp;      // CarbonImmutable
+        $rejection->clientHost;     // string|null — null when the line only carries an IP
+        $rejection->clientIp;       // string
+        $rejection->envelopeSender; // string|null — '' is the null sender, null when absent from the line
+        $rejection->recipient;      // string|null
+        $rejection->rejectionClass; // RejectionClass: EnvelopeList, Spf, Helo, RateLimit, Postscreen, Other
+        $rejection->rawLine;        // string — the raw log line
+    }
+}
+```
+
+### Importer configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mail-log-path` | `/var/log/mail.log` | The Postfix mail log the importer reads. |
+| `mail-log-offset-path` | `storage_path('app/receive_email/mail-log-offset.json')` | Where the importer persists its read position between runs. |
+
 ## Configuration
 
 After publishing the config file, you can tune the following settings in `config/receive_email.php`:
