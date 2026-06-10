@@ -19,6 +19,7 @@ beforeEach(function () {
     Process::fake([
         ...fakePostconf($this->postconf),
         'postmap *' => fakePostmap(),
+        'postfix check' => Process::result(),
         'systemctl reload postfix' => Process::result(),
         '*' => Process::result(),
     ]);
@@ -199,6 +200,35 @@ it('reloads on the next run after a failed reload instead of reporting already u
         ->assertSuccessful();
 
     Process::assertRanTimes('systemctl reload postfix', 2);
+});
+
+it('does not reload when postfix check fails (verify-before-activate)', function () {
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    Process::fake([
+        'postfix check' => Process::result(errorOutput: 'main.cf: undefined parameter', exitCode: 1),
+    ]);
+
+    // Every reload activates whatever is in the Postfix directory, so each
+    // one is gated on a fresh `postfix check`.
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('`postfix check` failed')
+        ->assertFailed();
+
+    Process::assertDidntRun('systemctl reload postfix');
+
+    // The marker persists so the next run retries activation once the
+    // configuration verifies.
+    expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
+
+    Process::fake([
+        'postfix check' => Process::result(),
+    ]);
+
+    $this->artisan('notifiable:sync-postfix')->assertSuccessful();
+
+    Process::assertRanTimes('systemctl reload postfix', 1);
+    expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeFalse();
 });
 
 it('reloads on the next run after --no-reload wrote configuration', function () {

@@ -182,6 +182,22 @@ describe('preflight checks', function () {
         Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
     });
 
+    it('seeds debconf with bare unquoted values on a fresh install', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        // debconf-set-selections stores the value verbatim (it is not a
+        // shell): embedded quotes would reach /etc/mailname and
+        // mydestination through the package's postinst.
+        Process::assertRan("echo 'postfix postfix/mailname string example.com' | debconf-set-selections");
+        Process::assertRan("echo 'postfix postfix/main_mailer_type string Internet Site' | debconf-set-selections");
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+    });
+
     it('aborts before changing any configuration when apt-get update fails', function () {
         Process::fake([
             'dpkg -l | grep postfix' => Process::result(''),
@@ -520,5 +536,53 @@ describe('postflight checks', function () {
         // The inner sync's writes were never activated; the marker makes the
         // next notifiable:sync-postfix run retry the reload.
         expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
+    });
+
+    it('does not let a later sync activate configuration whose postflight verification failed', function () {
+        config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+        Process::fake([
+            'postfix check' => Process::result(errorOutput: 'main.cf: undefined parameter', exitCode: 1),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('`postfix check` failed')
+            ->assertFailed();
+
+        // The inner sync wrote its maps before verification failed, so the
+        // reload-pending marker survives the failed setup run.
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
+
+        // The deploy-hook sync sees the pending reload, but must not
+        // activate the configuration setup refused to activate.
+        $this->artisan('notifiable:sync-postfix')
+            ->expectsOutputToContain('`postfix check` failed')
+            ->assertFailed();
+
+        Process::assertDidntRun('systemctl reload postfix');
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
+
+        // Once the configuration verifies again, the pending reload may
+        // proceed and activate it.
+        Process::fake([
+            'postfix check' => Process::result(),
+        ]);
+
+        $this->artisan('notifiable:sync-postfix')->assertSuccessful();
+
+        Process::assertRanTimes('systemctl reload postfix', 1);
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeFalse();
+    });
+
+    it('warns that written configuration is not active when postflight verification fails', function () {
+        config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+        Process::fake([
+            'postfix check' => Process::result(errorOutput: 'main.cf: undefined parameter', exitCode: 1),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('not yet active')
+            ->assertFailed();
     });
 });

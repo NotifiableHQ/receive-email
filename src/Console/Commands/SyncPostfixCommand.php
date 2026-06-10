@@ -227,6 +227,12 @@ class SyncPostfixCommand extends ConsoleCommand
 
     private function reloadPostfix(): void
     {
+        // Verify before activating: the reload also activates configuration
+        // a failed setup run left behind (its reload-pending marker survives
+        // a postflight failure), so broken config must be caught here rather
+        // than reloaded into service.
+        $this->assertPostfixCheckPasses();
+
         $reload = Process::run('systemctl reload postfix');
 
         if (! $reload->successful()) {
