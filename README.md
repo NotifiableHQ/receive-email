@@ -82,25 +82,22 @@ You'll have to show `Advance Settings` to select this.
     - Certificate: `/etc/nginx/ssl/your-application-domain.com/server.crt`
     - Private key: `/etc/nginx/ssl/your-application-domain.com/server.key`
 
-5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
+5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`. The command verifies it is running as root on Ubuntu 24.04+ before changing anything:
 ```bash
 sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
-    --user=forge \
     --tls-cert=/etc/nginx/ssl/your-application-domain.com/server.crt \
-    --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key \
-    --with-spf
+    --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key
 ```
-
-> **Important:** Always pass `--user=forge` (or your deploy user) when running with `sudo`. Without it, the pipe transport will run as `root`.
 
 **Available options:**
 
 | Option | Description |
 |--------|-------------|
-| `--user=forge` | The system user Postfix runs the pipe command as. Required when using `sudo`. |
+| `--user=forge` | The system user Postfix runs the pipe command as. Defaults to `$SUDO_USER` when run with `sudo`, otherwise the current user. Setup aborts if the resolved user is `root`. |
 | `--tls-cert=` | Path to the TLS certificate file (PEM format). Enables opportunistic TLS for inbound SMTP. |
 | `--tls-key=` | Path to the TLS private key file (PEM format). Must be provided together with `--tls-cert`. |
-| `--with-spf` | Installs `postfix-policyd-spf-python` and configures SPF verification for inbound mail. |
+| `--without-spf` | Skips SPF verification setup. By default, setup installs `postfix-policyd-spf-python` (or `spf-engine` on newer releases) and configures SPF verification for inbound mail. |
+| `--force` | Skips the Ubuntu 24.04+ operating system check, for other Debian-like systems. |
 
 6. Add the following DNS records to your domain:
 
@@ -188,6 +185,18 @@ After publishing the config file, you can tune the following settings in `config
 | `sender-table` | `senders` | Table name for the Sender model. |
 
 To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup command.
+
+### Envelope Sender filtering
+
+The `sender-domain-whitelist`, `sender-domain-blacklist`, `sender-address-whitelist`, and `sender-address-blacklist` config lists are enforced at SMTP time as Postfix access maps keyed on the Envelope Sender — the SMTP `MAIL FROM` address, the identity SPF verifies. The setup command syncs them once; whenever the lists change, re-sync them (e.g. from a deploy hook):
+
+```bash
+sudo php artisan notifiable:sync-postfix
+```
+
+When any whitelist has entries, the server rejects every sender not present in a whitelist. With only blacklists, listed senders are rejected and everyone else is accepted. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code.
+
+> **Upgrade note:** these lists previously matched the Header Sender (the `Sender:`/`From:` header) in PHP after the mail was accepted. They now match the Envelope Sender before acceptance, and the built-in filter classes are no longer evaluated pipe-time (custom `EmailFilterContract` filters still run). Where the two identities diverge — common for ESP-sent mail, e.g. header `From: alerts@stripe.com` with envelope sender `bounces@em5678.stripe.com` — the lists now apply to the envelope side, so whitelist the envelope domain (`em5678.stripe.com`), not the header domain.
 
 ## Rejected and Failed Mail
 
