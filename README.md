@@ -188,7 +188,7 @@ When any whitelist has entries, the server rejects every sender not present in a
 
 ## Observing SMTP-time Rejections
 
-Mail refused during the SMTP transaction (sender lists, SPF, HELO checks, rate limits, postscreen) never reaches your application — Postfix rejects it before pipe delivery. The mail-log importer closes that visibility gap: it tails the Postfix mail log from a persisted offset, parses reject events, and dispatches a `Notifiable\ReceiveEmail\Events\SmtpRejectionObserved` event for each one. Log rotation is detected automatically (the importer restarts from the new file), and unparseable reject lines are skipped and counted, never fatal.
+Mail refused during the SMTP transaction (sender lists, SPF, HELO checks, rate limits, postscreen) never reaches your application — Postfix rejects it before pipe delivery. The mail-log importer closes that visibility gap: it tails the Postfix mail log from a persisted offset, parses reject events — including postscreen's enforce-mode drops (PREGREET, HANGUP, DNSBL rank), which never produce a `NOQUEUE` line — and dispatches a `Notifiable\ReceiveEmail\Events\SmtpRejectionObserved` event for each one. Log rotation is detected automatically (the importer restarts from the new file), and unparseable reject lines are skipped and counted, never fatal.
 
 ### 1. Give the app user read access to the mail log
 
@@ -212,7 +212,9 @@ Schedule::command('notifiable:import-mail-log')
     ->withoutOverlapping();
 ```
 
-Each run resumes from the previous offset, so a rejection is observed exactly once. You can also run it manually with `php artisan notifiable:import-mail-log`.
+The first run records the current end of the mail log and imports nothing, so enabling the importer on a long-lived server does not flood your listeners with historical rejections. To import the existing history instead, make the first run `php artisan notifiable:import-mail-log --from-beginning` (the flag has no effect once an offset is stored). You can also run the command manually at any time.
+
+Each subsequent run resumes from the persisted offset. Delivery is **at-least-once with a minimal duplicate window**: the offset is written atomically after every dispatched rejection, so a crash, failed offset write, or throwing listener mid-run re-dispatches at most the single line that was in flight when the run died — never the whole batch. Make listeners idempotent (for example, key on `rawLine` plus its timestamp) if duplicates matter to your application.
 
 ### 3. Listen for rejections
 
@@ -236,12 +238,20 @@ class RecordSmtpRejection
 }
 ```
 
+Postscreen drops happen before the client ever reaches an smtpd process, so PREGREET, HANGUP, and DNSBL-rank events carry only `clientIp` — `clientHost`, `envelopeSender`, and `recipient` are `null`.
+
 ### Importer configuration
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `mail-log-path` | `/var/log/mail.log` | The Postfix mail log the importer reads. |
 | `mail-log-offset-path` | `storage_path('app/receive_email/mail-log-offset.json')` | Where the importer persists its read position between runs. |
+
+### Known limitations
+
+- **Copytruncate-style rotation can re-dispatch already-seen lines.** The importer detects rotation by inode change and in-place truncation by the file shrinking below the stored offset. Rotation that copies and truncates the log in place (`logrotate`'s `copytruncate`) keeps the inode, so depending on timing the importer may re-dispatch lines it has already seen or resume mid-content. Ubuntu's default create-based rotation (new file, new inode) is detected reliably and is unaffected.
+- **Lines logged between the importer's last run and a rotation may be missed.** When the log rotates, the importer restarts from the top of the new file; the unread tail of the previous file — up to one scheduler interval of lines — is never read. A tighter schedule shrinks the window.
+- **Parsed fields are best-effort extractions from attacker-influenced content.** `envelopeSender`, `recipient`, `clientHost`, and the rejection class are parsed out of log lines that embed client-supplied data (sender addresses, HELO strings, even pre-greeting bytes). Treat `rawLine` as the authoritative record and the parsed fields as conveniences — do not feed them into shell commands, queries, or HTML unescaped.
 
 ## Rejected and Failed Mail
 

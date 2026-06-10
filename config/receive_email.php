@@ -63,7 +63,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | Where the importer persists its read position between runs so each
-    | rejection is observed exactly once.
+    | rejection is observed at least once. The position is updated after
+    | every dispatched rejection and written atomically.
     |
     */
 

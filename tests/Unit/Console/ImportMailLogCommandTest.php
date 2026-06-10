@@ -9,6 +9,11 @@ function mailLogFixture(string $name): string
     return __DIR__.'/../../Fixtures/mail-log/'.$name;
 }
 
+function smtpdRejectLine(string $sender, string $time = '13:00:01'): string
+{
+    return "Jun  9 {$time} mail postfix/smtpd[31020]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <{$sender}>: Sender address rejected: Access denied; from=<{$sender}> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>";
+}
+
 beforeEach(function () {
     $this->logPath = (string) tempnam(sys_get_temp_dir(), 'maillog-');
     $this->offsetDirectory = sys_get_temp_dir().'/maillog-offset-'.uniqid();
@@ -19,9 +24,12 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    @chmod($this->offsetDirectory, 0755);
     @unlink($this->logPath);
     @unlink($this->offsetPath);
+    @unlink($this->offsetPath.'.tmp');
     @rmdir($this->offsetDirectory);
+    @unlink($this->offsetDirectory);
 });
 
 it('parses fixture rejections into SmtpRejectionObserved events', function () {
@@ -29,12 +37,12 @@ it('parses fixture rejections into SmtpRejectionObserved events', function () {
 
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
-    $this->artisan('notifiable:import-mail-log')
-        ->expectsOutputToContain('Observed 6 SMTP-time rejection(s).')
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])
+        ->expectsOutputToContain('Observed 10 SMTP-time rejection(s).')
         ->expectsOutputToContain('Skipped 1 unparseable rejection line(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 6);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
 
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->rejectionClass === RejectionClass::EnvelopeList
@@ -72,6 +80,78 @@ it('parses fixture rejections into SmtpRejectionObserved events', function () {
         return $event->rejection->rejectionClass === RejectionClass::EnvelopeList
             && $event->rejection->envelopeSender === 'crawler@blocked.example';
     });
+
+    // Postscreen enforce-mode drops that never produce a NOQUEUE line.
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::Postscreen
+            && $event->rejection->clientIp === '203.0.113.101'
+            && str_contains($event->rejection->rawLine, 'PREGREET');
+    });
+
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::Postscreen
+            && $event->rejection->clientIp === '203.0.113.102'
+            && str_contains($event->rejection->rawLine, 'HANGUP');
+    });
+
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::Postscreen
+            && $event->rejection->clientIp === '203.0.113.103'
+            && str_contains($event->rejection->rawLine, 'DNSBL rank');
+    });
+
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::RateLimit
+            && $event->rejection->clientIp === '203.0.113.104'
+            && str_contains($event->rejection->rawLine, 'too many connections');
+    });
+});
+
+it('starts at the end of the log on the first run', function () {
+    Event::fake();
+
+    copy(mailLogFixture('mixed.log'), $this->logPath);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('No stored offset; starting at the current end of the mail log.')
+        ->assertSuccessful();
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
+
+    file_put_contents($this->logPath, smtpdRejectLine('late@blocked.example')."\n", FILE_APPEND);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'late@blocked.example';
+    });
+});
+
+it('stops the first-run offset before a partially written final line', function () {
+    Event::fake();
+
+    $rejection = smtpdRejectLine('partial@blocked.example');
+
+    file_put_contents(
+        $this->logPath,
+        "Jun  9 12:00:01 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]\n".substr($rejection, 0, 80)
+    );
+
+    $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+
+    file_put_contents($this->logPath, substr($rejection, 80)."\n", FILE_APPEND);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'partial@blocked.example';
+    });
 });
 
 it('persists the offset between runs and never duplicates events', function () {
@@ -79,15 +159,15 @@ it('persists the offset between runs and never duplicates events', function () {
 
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
-    $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 6);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
 
     $this->artisan('notifiable:import-mail-log')
         ->expectsOutputToContain('Observed 0 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 6);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
 });
 
 it('imports only lines appended since the previous run', function () {
@@ -95,18 +175,18 @@ it('imports only lines appended since the previous run', function () {
 
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
-    $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
 
     file_put_contents($this->logPath, implode("\n", [
         'Jun  9 13:00:00 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]',
-        'Jun  9 13:00:01 mail postfix/smtpd[31020]: NOQUEUE: reject: RCPT from late.example[203.0.113.50]: 554 5.7.1 <late@blocked.example>: Sender address rejected: Access denied; from=<late@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<late.example>',
+        smtpdRejectLine('late@blocked.example'),
     ])."\n", FILE_APPEND);
 
     $this->artisan('notifiable:import-mail-log')
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 7);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->envelopeSender === 'late@blocked.example';
     });
@@ -117,7 +197,7 @@ it('restarts from the new file after log rotation', function () {
 
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
-    $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
 
     // Simulate logrotate: a freshly-created file (new inode) replaces the log.
     $replacement = sys_get_temp_dir().'/maillog-rotated-'.uniqid();
@@ -128,7 +208,7 @@ it('restarts from the new file after log rotation', function () {
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 7);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
 });
 
 it('restarts from the beginning when the log is truncated in place', function () {
@@ -136,29 +216,29 @@ it('restarts from the beginning when the log is truncated in place', function ()
 
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
-    $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
 
     // Same inode, but shorter than the stored offset (copytruncate-style rotation).
-    file_put_contents($this->logPath, 'Jun 10 04:00:05 mail postfix/smtpd[40002]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <spammer@blocked.example>: Sender address rejected: Access denied; from=<spammer@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>'."\n");
+    file_put_contents($this->logPath, smtpdRejectLine('spammer@blocked.example', '04:00:05')."\n");
 
     $this->artisan('notifiable:import-mail-log')
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 7);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
 });
 
 it('leaves a partially written final line for the next run', function () {
     Event::fake();
 
-    $rejection = 'Jun  9 12:01:10 mail postfix/smtpd[31010]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <spammer@blocked.example>: Sender address rejected: Access denied; from=<spammer@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>';
+    $rejection = smtpdRejectLine('spammer@blocked.example', '12:01:10');
 
     file_put_contents(
         $this->logPath,
         "Jun  9 12:00:01 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]\n".substr($rejection, 0, 80)
     );
 
-    $this->artisan('notifiable:import-mail-log')
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])
         ->expectsOutputToContain('Observed 0 SMTP-time rejection(s).')
         ->assertSuccessful();
 
@@ -169,6 +249,93 @@ it('leaves a partially written final line for the next run', function () {
         ->assertSuccessful();
 
     Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+});
+
+it('does not replay already-dispatched lines after a listener throws mid-batch', function () {
+    $dispatched = [];
+    $shouldThrow = true;
+
+    Event::listen(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) use (&$dispatched, &$shouldThrow) {
+        $dispatched[] = $event->rejection->envelopeSender;
+
+        if ($shouldThrow && $event->rejection->envelopeSender === 'second@blocked.example') {
+            throw new RuntimeException('listener failure');
+        }
+    });
+
+    file_put_contents($this->logPath, implode("\n", [
+        smtpdRejectLine('first@blocked.example'),
+        smtpdRejectLine('second@blocked.example'),
+        smtpdRejectLine('third@blocked.example'),
+    ])."\n");
+
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])
+        ->expectsOutputToContain('Import aborted')
+        ->assertFailed();
+
+    expect($dispatched)->toBe(['first@blocked.example', 'second@blocked.example']);
+
+    $shouldThrow = false;
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 2 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    // The first line is never replayed; only the in-flight line is
+    // re-dispatched — the documented minimal duplicate window.
+    expect($dispatched)->toBe([
+        'first@blocked.example',
+        'second@blocked.example',
+        'second@blocked.example',
+        'third@blocked.example',
+    ]);
+});
+
+it('fails without losing rejections when the offset cannot be persisted', function () {
+    Event::fake();
+
+    file_put_contents($this->logPath, smtpdRejectLine('first@blocked.example')."\n");
+
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+
+    file_put_contents($this->logPath, smtpdRejectLine('second@blocked.example')."\n", FILE_APPEND);
+
+    chmod($this->offsetDirectory, 0555);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Import aborted')
+        ->assertFailed();
+
+    chmod($this->offsetDirectory, 0755);
+
+    // The rejection whose offset write failed is re-dispatched on the next
+    // run — at-least-once, never lost.
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 3);
+
+    expect(Event::dispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'first@blocked.example';
+    }))->toHaveCount(1);
+});
+
+it('fails when the offset directory cannot be created', function () {
+    Event::fake();
+
+    copy(mailLogFixture('mixed.log'), $this->logPath);
+
+    // A file where the offset directory should be makes mkdir fail.
+    file_put_contents($this->offsetDirectory, 'not a directory');
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Import aborted')
+        ->assertFailed();
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
 });
 
 it('fails with guidance when the mail log is missing or unreadable', function () {

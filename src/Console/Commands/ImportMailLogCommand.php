@@ -8,11 +8,13 @@ use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
 use Notifiable\ReceiveEmail\MailLog\MailLogOffsetStore;
 use Notifiable\ReceiveEmail\MailLog\MailLogPosition;
 use Notifiable\ReceiveEmail\MailLog\RejectionLineParser;
+use Throwable;
 
 class ImportMailLogCommand extends Command
 {
     /** @var string */
-    protected $signature = 'notifiable:import-mail-log';
+    protected $signature = 'notifiable:import-mail-log
+                            {--from-beginning : Import the existing log history on the first run instead of starting at the end}';
 
     /** @var string */
     protected $description = 'Import SMTP-time rejections from the Postfix mail log and dispatch SmtpRejectionObserved events.';
@@ -37,7 +39,14 @@ class ImportMailLogCommand extends Command
 
         $store = new MailLogOffsetStore(Config::string('receive_email.mail-log-offset-path'));
 
-        $offset = $this->resumeOffset($store->get(), $inode, $size);
+        $position = $store->get();
+
+        // On a first run the log holds arbitrarily old history; fast-forward
+        // to the end without dispatching so listeners only see rejections
+        // logged from now on, unless the user opts into the backlog.
+        $fastForward = $position === null && ! $this->option('from-beginning');
+
+        $offset = $this->resumeOffset($position, $inode, $size);
 
         $handle = fopen($logPath, 'r');
 
@@ -63,6 +72,11 @@ class ImportMailLogCommand extends Command
                 }
 
                 $offset += strlen($line);
+
+                if ($fastForward) {
+                    continue;
+                }
+
                 $line = rtrim($line, "\r\n");
 
                 if (! $parser->isRejectionLine($line)) {
@@ -79,12 +93,26 @@ class ImportMailLogCommand extends Command
 
                 event(new SmtpRejectionObserved($rejection));
                 $observed++;
+
+                // Persist after every dispatch so a failure further into the
+                // batch never replays rejections that listeners already saw.
+                $store->put(new MailLogPosition($inode, $offset));
             }
+
+            $store->put(new MailLogPosition($inode, $offset));
+        } catch (Throwable $exception) {
+            $this->error("Import aborted after observing {$observed} rejection(s): {$exception->getMessage()} The next run resumes from the last persisted offset.");
+
+            return self::FAILURE;
         } finally {
             fclose($handle);
         }
 
-        $store->put(new MailLogPosition($inode, $offset));
+        if ($fastForward) {
+            $this->info('No stored offset; starting at the current end of the mail log. Run with --from-beginning to import the existing history.');
+
+            return self::SUCCESS;
+        }
 
         $this->info("Observed {$observed} SMTP-time rejection(s).");
 
