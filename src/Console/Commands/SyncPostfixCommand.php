@@ -39,7 +39,7 @@ class SyncPostfixCommand extends ConsoleCommand
             $whitelist = $this->listEntries('sender-address-whitelist', 'sender-domain-whitelist');
             $blacklist = $this->listEntries('sender-address-blacklist', 'sender-domain-blacklist');
 
-            $changed = $this->writeAccessMap(self::WHITELIST_MAP, $whitelist, 'OK');
+            $changed = $this->writeAccessMap(self::WHITELIST_MAP, $this->withNullSenderExemption($whitelist), 'OK');
             $changed = $this->writeAccessMap(self::BLACKLIST_MAP, $blacklist, 'REJECT') || $changed;
             $changed = $this->syncSenderRestrictions($whitelist !== [], $blacklist !== []) || $changed;
 
@@ -85,9 +85,29 @@ class SyncPostfixCommand extends ConsoleCommand
     }
 
     /**
-     * Write an access map and rebuild its indexed form with postmap. Returns
-     * whether the map content changed; an unchanged map is rebuilt only when
-     * its indexed .db file is missing.
+     * Whitelist mode's default-reject shape would also reject `MAIL FROM:<>`,
+     * but RFC 5321 §4.5.5 requires the null Envelope Sender — remote bounces
+     * and delivery status notifications addressed to this domain — to stay
+     * deliverable. Postfix looks the null sender up in access maps via
+     * smtpd_null_access_lookup_key (default `<>`), so the whitelist map OKs
+     * that key. The open shape used without a whitelist never rejects the
+     * null sender, so no exemption is rendered there.
+     *
+     * @param  list<string>  $whitelist
+     * @return list<string>
+     */
+    private function withNullSenderExemption(array $whitelist): array
+    {
+        return $whitelist === [] ? [] : array_values(array_unique(['<>', ...$whitelist]));
+    }
+
+    /**
+     * Write an access map and rebuild its indexed form with postmap. The map
+     * is written and indexed at a staging path and only renamed live after
+     * postmap succeeds, so a failed build leaves the previous text in place
+     * and the next run retries instead of mistaking the stale .db for
+     * current. Returns whether the map content changed; an unchanged map is
+     * rebuilt only when its indexed .db file is missing.
      *
      * @param  list<string>  $entries
      */
@@ -105,22 +125,35 @@ class SyncPostfixCommand extends ConsoleCommand
 
         $unchanged = is_file($path) && file_get_contents($path) === $content;
 
-        if (! $unchanged) {
-            if (@file_put_contents($path, $content) === false) {
-                throw new RuntimeException("Failed to write file: {$path}");
-            }
-
-            $this->line("Wrote {$path} (".count($entries).' entries)');
+        if ($unchanged && is_file("{$path}.db")) {
+            return false;
         }
 
-        if (! $unchanged || ! is_file("{$path}.db")) {
-            $postmap = Process::run("postmap hash:{$path}");
+        $staging = "{$path}.tmp";
 
-            if (! $postmap->successful()) {
-                throw new RuntimeException(
-                    "`postmap hash:{$path}` failed: ".trim($postmap->output().' '.$postmap->errorOutput())
-                );
-            }
+        if (@file_put_contents($staging, $content) === false) {
+            throw new RuntimeException("Failed to write file: {$staging}");
+        }
+
+        $postmap = Process::run("postmap hash:{$staging}");
+
+        if (! $postmap->successful()) {
+            @unlink($staging);
+            @unlink("{$staging}.db");
+
+            throw new RuntimeException(
+                "`postmap hash:{$staging}` failed: ".trim($postmap->output().' '.$postmap->errorOutput())
+            );
+        }
+
+        // The .db moves live before the text: interrupted here, a newer text
+        // forces a rebuild on the next run, while a newer .db is harmless.
+        if (! @rename("{$staging}.db", "{$path}.db") || ! @rename($staging, $path)) {
+            throw new RuntimeException("Failed to move {$staging} into place at {$path}");
+        }
+
+        if (! $unchanged) {
+            $this->line("Wrote {$path} (".count($entries).' entries)');
         }
 
         return ! $unchanged;

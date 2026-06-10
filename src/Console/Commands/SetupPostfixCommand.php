@@ -448,7 +448,17 @@ class SetupPostfixCommand extends ConsoleCommand
     private function reloadPostfix(): void
     {
         $this->info("\nReloading postfix\n");
-        $this->line(Process::run('systemctl reload postfix')->output());
+
+        $reload = Process::run('systemctl reload postfix');
+
+        if (! $reload->successful()) {
+            throw new RuntimeException(
+                'Failed to reload Postfix: the verified configuration is not active. '
+                .trim($reload->output().' '.$reload->errorOutput())
+            );
+        }
+
+        $this->info('Postfix reloaded.');
     }
 
     private function getReceiveEmailCommand(): string

@@ -186,6 +186,8 @@ sudo php artisan notifiable:sync-postfix
 
 When any whitelist has entries, the server rejects every sender not present in a whitelist. With only blacklists, listed senders are rejected and everyone else is accepted; a blacklisted sender is rejected even when a whitelist would also match it. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code (the [mail-log importer](#observing-smtp-time-rejections) closes that visibility gap).
 
+Whitelist mode always exempts the null Envelope Sender: the rendered whitelist map contains a `<>` entry (Postfix's `smtpd_null_access_lookup_key`), so `MAIL FROM:<>` — remote bounces and delivery status notifications addressed to your domain — is accepted even though it appears in no whitelist, as RFC 5321 requires. Blacklist-only configurations never reject unlisted senders, so they need (and get) no exemption. Mail accepted through this exemption still passes through your Pipe-time Filters, where it can be discarded if unwanted.
+
 ## Observing SMTP-time Rejections
 
 Mail refused during the SMTP transaction (sender lists, SPF, HELO checks, rate limits, postscreen) never reaches your application — Postfix rejects it before pipe delivery. The mail-log importer closes that visibility gap: it tails the Postfix mail log from a persisted offset, parses reject events, and dispatches a `Notifiable\ReceiveEmail\Events\SmtpRejectionObserved` event for each one. Log rotation is detected automatically (the importer restarts from the new file), and unparseable reject lines are skipped and counted, never fatal.

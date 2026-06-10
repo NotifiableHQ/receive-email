@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
 use Notifiable\ReceiveEmail\Console\Commands\SetupPostfixCommand;
 use Notifiable\ReceiveEmail\Support\PostfixDirectory;
@@ -31,6 +32,13 @@ beforeEach(function () {
         'postconf -x mydestination' => Process::result('mydestination = example.com, localhost.localdomain, localhost'),
         'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python' => Process::result(),
         'DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine' => Process::result(),
+        // Like the real postmap, build the indexed .db next to the given map.
+        'postmap *' => function (PendingProcess $process) {
+            touch(str((string) $process->command)->after('hash:')->value().'.db');
+
+            return Process::result();
+        },
+        'systemctl reload postfix' => Process::result(),
         '*' => Process::result(),
     ]);
 });
@@ -43,11 +51,10 @@ afterEach(function () {
     putenv('SUDO_USER');
 
     @chmod($this->postfixDir.'/main.cf', 0644);
-    @unlink($this->postfixDir.'/main.cf');
-    @unlink($this->postfixDir.'/master.cf');
-    @unlink($this->postfixDir.'/os-release');
-    @unlink($this->postfixDir.'/notifiable_sender_whitelist');
-    @unlink($this->postfixDir.'/notifiable_sender_blacklist');
+
+    foreach (glob($this->postfixDir.'/*') ?: [] as $file) {
+        @unlink($file);
+    }
     @rmdir($this->postfixDir);
 });
 
@@ -401,7 +408,7 @@ describe('sender access map sync', function () {
             .'reject_non_fqdn_sender, reject_unknown_sender_domain'
         );
 
-        Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist');
+        Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist.tmp');
 
         // Setup reloads Postfix itself after the postflight checks; the
         // inner sync must not reload a not-yet-verified configuration.
@@ -441,5 +448,18 @@ describe('postflight checks', function () {
         Process::assertRan('postfix check');
         Process::assertRan('postconf -x mydestination');
         Process::assertRan('systemctl reload postfix');
+    });
+
+    it('fails when the Postfix reload fails', function () {
+        Process::fake([
+            'systemctl reload postfix' => Process::result(
+                errorOutput: 'Job for postfix.service failed because the control process exited with error code.',
+                exitCode: 1,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('Failed to reload Postfix')
+            ->assertFailed();
     });
 });
