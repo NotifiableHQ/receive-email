@@ -4,16 +4,18 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Facades\Process;
-use Notifiable\ReceiveEmail\Console\Commands\Concerns\EditsPostfixConfig;
+use Notifiable\ReceiveEmail\Console\Commands\Concerns\ManagesPostfixConfig;
 use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 
 class SetupPostfixCommand extends ConsoleCommand
 {
-    use EditsPostfixConfig;
+    use ManagesPostfixConfig;
 
     public const POSTFIX_DIR = PostfixDirectory::DEFAULT;
+
+    private const RECIPIENT_RESTRICTIONS = 'permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination';
 
     /**
      * The os-release file consulted by the operating system preflight check.
@@ -106,78 +108,72 @@ class SetupPostfixCommand extends ConsoleCommand
     }
 
     /**
-     * Configure the main.cf file.
+     * Configure the main.cf parameters.
      */
     private function configureMainConfigFile(string $domain): void
     {
         $this->info("\nConfiguring the Main config file.\n");
 
-        $mainConfig = $this->getConfigPath('main.cf');
-
-        $newHostname = "myhostname = $domain";
-        $oldHostname = $this->editLine($mainConfig, '/^myhostname = (.*)$/m', $newHostname);
-
-        if ($oldHostname === null) {
-            throw new RuntimeException("'myhostname' is missing from {$mainConfig}.");
-        }
+        $this->setMainParameter('myhostname', $domain);
 
         // Recipient restrictions
-        $this->upsertOrEditLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination');
+        $this->setMainParameter('smtpd_recipient_restrictions', self::RECIPIENT_RESTRICTIONS);
 
-        $this->upsertLine($mainConfig, 'local_recipient_maps =');
+        $this->setMainParameter('local_recipient_maps', '');
 
         // Disable outbound delivery (receive-only)
-        $this->upsertLine($mainConfig, 'default_transport = error');
-        $this->upsertLine($mainConfig, 'relay_transport = error');
+        $this->setMainParameter('default_transport', 'error');
+        $this->setMainParameter('relay_transport', 'error');
 
         // Message size limit
-        $this->upsertOrEditLine($mainConfig, '/^message_size_limit = (.*)$/m', 'message_size_limit = '.config('receive_email.message-size-limit', 26214400));
+        $sizeLimit = config('receive_email.message-size-limit', 26214400);
+        $this->setMainParameter('message_size_limit', "{$sizeLimit}");
 
         // HELO restrictions
-        $this->upsertLine($mainConfig, 'smtpd_helo_required = yes');
-        $this->upsertLine($mainConfig, 'smtpd_helo_restrictions = reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
+        $this->setMainParameter('smtpd_helo_required', 'yes');
+        $this->setMainParameter('smtpd_helo_restrictions', 'reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
 
         // smtpd_sender_restrictions is owned by notifiable:sync-postfix,
         // invoked at the end of setup.
 
         // Disable VRFY
-        $this->upsertLine($mainConfig, 'disable_vrfy_command = yes');
+        $this->setMainParameter('disable_vrfy_command', 'yes');
 
         // Hide version from banner
-        $this->upsertLine($mainConfig, 'smtpd_banner = $myhostname ESMTP');
+        $this->setMainParameter('smtpd_banner', '$myhostname ESMTP');
 
         // Rate limiting
-        $this->upsertLine($mainConfig, 'smtpd_client_connection_rate_limit = 30');
-        $this->upsertLine($mainConfig, 'smtpd_client_message_rate_limit = 60');
-        $this->upsertLine($mainConfig, 'smtpd_client_recipient_rate_limit = 120');
-        $this->upsertLine($mainConfig, 'smtpd_error_sleep_time = 1s');
-        $this->upsertLine($mainConfig, 'smtpd_soft_error_limit = 5');
-        $this->upsertLine($mainConfig, 'smtpd_hard_error_limit = 10');
+        $this->setMainParameter('smtpd_client_connection_rate_limit', '30');
+        $this->setMainParameter('smtpd_client_message_rate_limit', '60');
+        $this->setMainParameter('smtpd_client_recipient_rate_limit', '120');
+        $this->setMainParameter('smtpd_error_sleep_time', '1s');
+        $this->setMainParameter('smtpd_soft_error_limit', '5');
+        $this->setMainParameter('smtpd_hard_error_limit', '10');
 
         // postscreen: drop clients that talk before the SMTP greeting
-        $this->upsertOrEditLine($mainConfig, '/^postscreen_greet_action = (.*)$/m', 'postscreen_greet_action = enforce');
+        $this->setMainParameter('postscreen_greet_action', 'enforce');
 
         // Data restrictions
-        $this->upsertLine($mainConfig, 'smtpd_data_restrictions = reject_unauth_pipelining');
+        $this->setMainParameter('smtpd_data_restrictions', 'reject_unauth_pipelining');
 
         // Timeout hardening
-        $this->upsertLine($mainConfig, 'smtpd_timeout = 120s');
+        $this->setMainParameter('smtpd_timeout', '120s');
 
         // Queue lifetimes: the queue is the durability buffer for tempfailed
         // mail, so the retry window must outlive a multi-day incident. Bounces
         // can never be delivered on this receive-only server, so dead bounce
         // messages are deleted immediately.
-        $this->upsertOrEditLine($mainConfig, '/^maximal_queue_lifetime = (.*)$/m', 'maximal_queue_lifetime = 5d');
-        $this->upsertOrEditLine($mainConfig, '/^bounce_queue_lifetime = (.*)$/m', 'bounce_queue_lifetime = 0');
+        $this->setMainParameter('maximal_queue_lifetime', '5d');
+        $this->setMainParameter('bounce_queue_lifetime', '0');
 
         // TLS configuration
-        $this->configureTLS($mainConfig);
+        $this->configureTLS();
     }
 
     /**
      * Configure TLS if cert and key are provided.
      */
-    private function configureTLS(string $mainConfig): void
+    private function configureTLS(): void
     {
         /** @var string|null $tlsCert */
         $tlsCert = $this->option('tls-cert');
@@ -194,13 +190,13 @@ class SetupPostfixCommand extends ConsoleCommand
                 throw new RuntimeException("TLS key file does not exist: {$tlsKey}");
             }
 
-            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_cert_file = (.*)$/m', "smtpd_tls_cert_file = {$tlsCert}");
-            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_key_file = (.*)$/m', "smtpd_tls_key_file = {$tlsKey}");
-            $this->upsertLine($mainConfig, 'smtpd_tls_security_level = may');
+            $this->setMainParameter('smtpd_tls_cert_file', $tlsCert);
+            $this->setMainParameter('smtpd_tls_key_file', $tlsKey);
+            $this->setMainParameter('smtpd_tls_security_level', 'may');
             // ">=TLSv1.2" requires Postfix 3.6+; Ubuntu 24.04 ships 3.8.
-            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_protocols = (.*)$/m', 'smtpd_tls_protocols = >=TLSv1.2');
-            $this->upsertLine($mainConfig, 'smtpd_tls_loglevel = 1');
-            $this->upsertLine($mainConfig, 'smtp_tls_security_level = none');
+            $this->setMainParameter('smtpd_tls_protocols', '>=TLSv1.2');
+            $this->setMainParameter('smtpd_tls_loglevel', '1');
+            $this->setMainParameter('smtp_tls_security_level', 'none');
         } else {
             $this->warn('TLS is not configured. Inbound SMTP connections will be unencrypted.');
             $this->warn('Use --tls-cert and --tls-key to enable TLS.');
@@ -208,13 +204,11 @@ class SetupPostfixCommand extends ConsoleCommand
     }
 
     /**
-     * Configure the master.cf file.
+     * Configure the master.cf services.
      */
     private function configureMasterConfigFile(string $user): void
     {
         $this->info("\nConfiguring the Master config file.\n");
-
-        $masterConfig = $this->getConfigPath('master.cf');
 
         // postscreen topology: postscreen owns port 25 and drops botnet
         // zombies before they consume an smtpd process; legitimate clients
@@ -222,22 +216,15 @@ class SetupPostfixCommand extends ConsoleCommand
         // content_filter keeps piping accepted mail into the notifiable
         // transport. tlsproxy keeps inbound STARTTLS working behind
         // postscreen; dnsblog is its DNS lookup helper.
-        $newSmtpDaemon = 'smtp inet n - - - 1 postscreen';
-        $oldSmtpDaemon = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newSmtpDaemon);
-
-        if ($oldSmtpDaemon === null) {
-            throw new RuntimeException("'smtp inet' is missing from {$masterConfig}.");
-        }
-
-        $this->upsertOrEditLine($masterConfig, '/^smtpd(\s+)pass(.*)$/m', 'smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy');
-        $this->upsertOrEditLine($masterConfig, '/^dnsblog(\s+)unix(.*)$/m', 'dnsblog unix - - - - 0 dnsblog');
-        $this->upsertOrEditLine($masterConfig, '/^tlsproxy(\s+)unix(.*)$/m', 'tlsproxy unix - - - - 0 tlsproxy');
+        $this->setMasterService('smtp/inet', 'smtp inet n - - - 1 postscreen');
+        $this->setMasterService('smtpd/pass', 'smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy');
+        $this->setMasterService('dnsblog/unix', 'dnsblog unix - - - - 0 dnsblog');
+        $this->setMasterService('tlsproxy/unix', 'tlsproxy unix - - - - 0 tlsproxy');
 
         $command = $this->getReceiveEmailCommand();
         $concurrency = config('receive_email.pipe-concurrency', 4);
 
-        $deliveryMethod = "notifiable unix - n n - {$concurrency} pipe flags=F user=$user argv={$command}";
-        $this->upsertOrEditLine($masterConfig, '/^notifiable(.*)$/m', $deliveryMethod);
+        $this->setMasterService('notifiable/unix', "notifiable unix - n n - {$concurrency} pipe flags=F user={$user} argv={$command}");
     }
 
     /**
@@ -249,15 +236,15 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $this->installSpfPolicyDaemon();
 
-        $mainConfig = $this->getConfigPath('main.cf');
-        $this->upsertLine($mainConfig, 'policy-spf_time_limit = 3600s');
+        $this->setMainParameter('policy-spf_time_limit', '3600s');
 
         // Update smtpd_recipient_restrictions to include SPF check
-        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination, check_policy_service unix:private/policy-spf';
-        $this->editLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', $smtpdRecipientRestrictions);
+        $this->setMainParameter(
+            'smtpd_recipient_restrictions',
+            self::RECIPIENT_RESTRICTIONS.', check_policy_service unix:private/policy-spf'
+        );
 
-        $masterConfig = $this->getConfigPath('master.cf');
-        $this->upsertLine($masterConfig, 'policy-spf unix -  n  n  -  0  spawn user=policyd-spf argv=/usr/bin/policyd-spf');
+        $this->setMasterService('policy-spf/unix', 'policy-spf unix - n n - 0 spawn user=policyd-spf argv=/usr/bin/policyd-spf');
     }
 
     /**

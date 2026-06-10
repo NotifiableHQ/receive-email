@@ -5,7 +5,7 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Process;
-use Notifiable\ReceiveEmail\Console\Commands\Concerns\EditsPostfixConfig;
+use Notifiable\ReceiveEmail\Console\Commands\Concerns\ManagesPostfixConfig;
 use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
@@ -14,11 +14,11 @@ use Symfony\Component\Console\Command\Command;
  * Compiles the built-in sender whitelist/blacklist config lists into Postfix
  * check_sender_access maps keyed on the Envelope Sender, and rewrites
  * smtpd_sender_restrictions to enforce them as SMTP-time Rejection (ADR-0001).
- * This command owns the smtpd_sender_restrictions line.
+ * This command owns the smtpd_sender_restrictions parameter.
  */
 class SyncPostfixCommand extends ConsoleCommand
 {
-    use EditsPostfixConfig;
+    use ManagesPostfixConfig;
 
     public const WHITELIST_MAP = 'notifiable_sender_whitelist';
 
@@ -166,23 +166,10 @@ class SyncPostfixCommand extends ConsoleCommand
      */
     private function syncSenderRestrictions(bool $hasWhitelist, bool $hasBlacklist): bool
     {
-        $mainConfig = $this->getConfigPath('main.cf');
-
-        $line = $this->renderSenderRestrictions($hasWhitelist, $hasBlacklist);
-
-        $content = file_get_contents($mainConfig);
-
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$mainConfig}");
-        }
-
-        if (preg_match('/^smtpd_sender_restrictions = .*$/m', $content, $matches) && $matches[0] === $line) {
-            return false;
-        }
-
-        $this->upsertOrEditLine($mainConfig, '/^smtpd_sender_restrictions = (.*)$/m', $line);
-
-        return true;
+        return $this->setMainParameter(
+            'smtpd_sender_restrictions',
+            $this->renderSenderRestrictions($hasWhitelist, $hasBlacklist)
+        );
     }
 
     private function renderSenderRestrictions(bool $hasWhitelist, bool $hasBlacklist): string
@@ -206,7 +193,7 @@ class SyncPostfixCommand extends ConsoleCommand
             $restrictions[] = 'reject';
         }
 
-        return 'smtpd_sender_restrictions = '.implode(', ', $restrictions);
+        return implode(', ', $restrictions);
     }
 
     private function reloadPostfix(): void
