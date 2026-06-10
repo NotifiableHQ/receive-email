@@ -117,9 +117,16 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         $this->line($update->output());
-        $escapedDomain = escapeshellarg($domain);
-        $this->line(Process::run("echo \"postfix postfix/mailname string {$escapedDomain}\" | debconf-set-selections")->output());
-        $this->line(Process::run("echo \"postfix postfix/main_mailer_type string 'Internet Site'\" | debconf-set-selections")->output());
+
+        // debconf-set-selections stores the value verbatim (it is not a
+        // shell), so the echoed line must carry no embedded quotes: they
+        // would reach /etc/mailname and mydestination through the package's
+        // postinst. The whole line is escaped as one shell argument instead.
+        $mailname = escapeshellarg("postfix postfix/mailname string {$domain}");
+        $mailerType = escapeshellarg('postfix postfix/main_mailer_type string Internet Site');
+
+        $this->line(Process::run("echo {$mailname} | debconf-set-selections")->output());
+        $this->line(Process::run("echo {$mailerType} | debconf-set-selections")->output());
 
         $install = Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
 

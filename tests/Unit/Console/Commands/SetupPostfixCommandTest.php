@@ -182,6 +182,22 @@ describe('preflight checks', function () {
         Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
     });
 
+    it('seeds debconf with bare unquoted values on a fresh install', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        // debconf-set-selections stores the value verbatim (it is not a
+        // shell): embedded quotes would reach /etc/mailname and
+        // mydestination through the package's postinst.
+        Process::assertRan("echo 'postfix postfix/mailname string example.com' | debconf-set-selections");
+        Process::assertRan("echo 'postfix postfix/main_mailer_type string Internet Site' | debconf-set-selections");
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+    });
+
     it('aborts before changing any configuration when apt-get update fails', function () {
         Process::fake([
             'dpkg -l | grep postfix' => Process::result(''),
