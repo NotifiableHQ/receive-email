@@ -81,6 +81,14 @@ class SetupPostfixCommand extends ConsoleCommand
         } catch (RuntimeException $e) {
             $this->error($e->getMessage());
 
+            if ($this->postfixReloadIsPending()) {
+                $this->warn(
+                    'Setup wrote configuration to '.PostfixDirectory::$path.' that is not yet active. '
+                    .'The next notifiable:sync-postfix run (e.g. from a deploy hook) will activate it '
+                    .'only after `postfix check` passes.'
+                );
+            }
+
             return Command::FAILURE;
         }
 
@@ -99,8 +107,6 @@ class SetupPostfixCommand extends ConsoleCommand
             return;
         }
 
-        $escapedDomain = escapeshellarg($domain);
-
         $update = Process::run('apt-get update');
 
         if (! $update->successful()) {
@@ -111,6 +117,7 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         $this->line($update->output());
+        $escapedDomain = escapeshellarg($domain);
         $this->line(Process::run("echo \"postfix postfix/mailname string {$escapedDomain}\" | debconf-set-selections")->output());
         $this->line(Process::run("echo \"postfix postfix/main_mailer_type string 'Internet Site'\" | debconf-set-selections")->output());
 
@@ -377,13 +384,7 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nVerifying the Postfix configuration\n");
 
-        $check = Process::run('postfix check');
-
-        if (! $check->successful()) {
-            throw new RuntimeException(
-                '`postfix check` failed; not reloading Postfix: '.trim($check->output().' '.$check->errorOutput())
-            );
-        }
+        $this->assertPostfixCheckPasses();
 
         $mydestination = trim(Process::run('postconf -x mydestination')->output());
 

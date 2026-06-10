@@ -18,9 +18,30 @@ trait ManagesPostfixConfig
      * Records that configuration has been written but not yet activated by a
      * reload. Without it, a failed reload would strand the new
      * configuration: the next sync run would find nothing left to change,
-     * report "already up to date", and never retry the reload.
+     * report "already up to date", and never retry the reload. The marker
+     * alone never authorizes activation — every reload path is gated on a
+     * fresh `postfix check` (see assertPostfixCheckPasses), so a marker left
+     * by a failed run cannot activate configuration that fails verification.
      */
     private const RELOAD_PENDING_MARKER = 'notifiable_reload_pending';
+
+    /**
+     * A reload activates whatever configuration is on disk — including
+     * configuration an earlier failed run wrote but refused to activate —
+     * so every reload path must pass a fresh `postfix check` first.
+     */
+    private function assertPostfixCheckPasses(): void
+    {
+        $check = Process::run('postfix check');
+
+        if (! $check->successful()) {
+            throw new RuntimeException(
+                '`postfix check` failed; not reloading Postfix. The configuration written to '
+                .PostfixDirectory::$path.' stays inactive until a later run passes verification: '
+                .trim($check->output().' '.$check->errorOutput())
+            );
+        }
+    }
 
     /**
      * Set a main.cf parameter via `postconf -e`, skipping the write when the
