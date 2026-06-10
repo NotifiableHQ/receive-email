@@ -16,8 +16,6 @@ beforeEach(function () {
     $this->postfixDir = sys_get_temp_dir().'/postfix-test-'.uniqid();
     mkdir($this->postfixDir, 0755, true);
 
-    file_put_contents($this->postfixDir.'/main.cf', "myhostname = old.example.com\n");
-    file_put_contents($this->postfixDir.'/master.cf', "smtp      inet  n       -       y       -       -       smtpd\n");
     file_put_contents($this->postfixDir.'/os-release', "ID=ubuntu\nVERSION_ID=\"24.04\"\n");
 
     PostfixDirectory::$path = $this->postfixDir;
@@ -26,18 +24,24 @@ beforeEach(function () {
 
     putenv('SUDO_USER');
 
+    // The in-memory Postfix configuration behind the postconf fakes. Seeded
+    // with the Ubuntu default for local_recipient_maps so setup observes a
+    // value it must clear; unseeded parameters read as empty.
+    $this->postconf = (object) [
+        'params' => ['local_recipient_maps' => 'proxy:unix:passwd.byname $alias_maps'],
+        'services' => [],
+    ];
+
     Process::fake([
         'dpkg -l | grep postfix' => Process::result('ii  postfix  3.8.6-1  amd64  High-performance mail transport agent'),
-        'postfix check' => Process::result(),
-        'postconf -x mydestination' => Process::result('mydestination = example.com, localhost.localdomain, localhost'),
+        'apt-get update' => Process::result(),
+        'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix' => Process::result(),
         'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python' => Process::result(),
         'DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine' => Process::result(),
-        // Like the real postmap, build the indexed .db next to the given map.
-        'postmap *' => function (PendingProcess $process) {
-            touch(str((string) $process->command)->after('hash:')->value().'.db');
-
-            return Process::result();
-        },
+        'postfix check' => Process::result(),
+        'postconf -x mydestination' => Process::result('mydestination = example.com, localhost.localdomain, localhost'),
+        ...fakePostconf($this->postconf),
+        'postmap *' => fakePostmap(),
         'systemctl reload postfix' => Process::result(),
         '*' => Process::result(),
     ]);
@@ -49,8 +53,6 @@ afterEach(function () {
     SetupPostfixCommand::$effectiveUserId = null;
 
     putenv('SUDO_USER');
-
-    @chmod($this->postfixDir.'/main.cf', 0644);
 
     foreach (glob($this->postfixDir.'/*') ?: [] as $file) {
         @unlink($file);
@@ -65,7 +67,7 @@ describe('pipe user resolution', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/master.cf'))->toContain('user=deploy');
+        expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy');
     });
 
     it('resolves the pipe user from $SUDO_USER when --user is not given', function () {
@@ -74,7 +76,7 @@ describe('pipe user resolution', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com'])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/master.cf'))->toContain('user=forge');
+        expect($this->postconf->services['notifiable/unix'])->toContain('user=forge');
     });
 
     it('falls back to the current user without --user and $SUDO_USER', function () {
@@ -87,35 +89,25 @@ describe('pipe user resolution', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com'])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/master.cf'))->toContain("user={$currentUser}");
+        expect($this->postconf->services['notifiable/unix'])->toContain("user={$currentUser}");
     });
 
     it('aborts before mutating anything when --user is root', function () {
-        $mainBefore = file_get_contents($this->postfixDir.'/main.cf');
-        $masterBefore = file_get_contents($this->postfixDir.'/master.cf');
-
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'root'])
             ->expectsOutputToContain('The pipe command cannot run as root')
             ->assertFailed();
 
         Process::assertNothingRan();
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->toBe($mainBefore)
-            ->and(file_get_contents($this->postfixDir.'/master.cf'))->toBe($masterBefore);
     });
 
     it('aborts before mutating anything when $SUDO_USER resolves to root', function () {
         putenv('SUDO_USER=root');
-
-        $mainBefore = file_get_contents($this->postfixDir.'/main.cf');
-        $masterBefore = file_get_contents($this->postfixDir.'/master.cf');
 
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com'])
             ->expectsOutputToContain('The pipe command cannot run as root')
             ->assertFailed();
 
         Process::assertNothingRan();
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->toBe($mainBefore)
-            ->and(file_get_contents($this->postfixDir.'/master.cf'))->toBe($masterBefore);
     });
 
     it('rejects a pipe user containing invalid characters', function () {
@@ -131,16 +123,11 @@ describe('preflight checks', function () {
     it('aborts before mutating anything when not run as root', function () {
         SetupPostfixCommand::$effectiveUserId = 501;
 
-        $mainBefore = file_get_contents($this->postfixDir.'/main.cf');
-        $masterBefore = file_get_contents($this->postfixDir.'/master.cf');
-
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->expectsOutputToContain('This command must be run as root')
             ->assertFailed();
 
         Process::assertNothingRan();
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->toBe($mainBefore)
-            ->and(file_get_contents($this->postfixDir.'/master.cf'))->toBe($masterBefore);
     });
 
     it('aborts on a non-Ubuntu operating system', function () {
@@ -180,51 +167,134 @@ describe('preflight checks', function () {
             ->expectsOutputToContain('Skipping the operating system check (--force)')
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/master.cf'))->toContain('user=deploy');
+        expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy');
     });
 
-    it('aborts with the failing path when a config file write fails', function () {
-        chmod($this->postfixDir.'/main.cf', 0444);
+    it('installs Postfix when it is not already installed', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+        ]);
 
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
-            ->expectsOutputToContain("Failed to write file: {$this->postfixDir}/main.cf")
+            ->assertSuccessful();
+
+        Process::assertRan('apt-get update');
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+    });
+
+    it('aborts before changing any configuration when apt-get update fails', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+            'apt-get update' => Process::result(
+                errorOutput: 'E: Could not get lock /var/lib/apt/lists/lock',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('`apt-get update` failed')
             ->assertFailed();
+
+        Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+        Process::assertDidntRun(fn (PendingProcess $process) => str_starts_with($process->command, 'postconf -e'));
+    });
+
+    it('aborts before changing any configuration when apt-get install fails', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix' => Process::result(
+                errorOutput: 'E: Unable to locate package postfix',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('`apt-get install -y postfix` failed')
+            ->assertFailed();
+
+        Process::assertDidntRun(fn (PendingProcess $process) => str_starts_with($process->command, 'postconf -e'));
+    });
+
+    it('aborts before reloading when postconf fails to write a parameter', function () {
+        Process::fake([
+            'postconf -e *' => Process::result(errorOutput: 'postconf: fatal: open /etc/postfix/main.cf: Permission denied', exitCode: 1),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('Failed to set myhostname via postconf')
+            ->assertFailed();
+
+        Process::assertDidntRun('systemctl reload postfix');
+    });
+
+    it('aborts before reloading when postconf fails to write a master.cf service', function () {
+        Process::fake([
+            'postconf -M *' => Process::result(errorOutput: 'postconf: fatal: open /etc/postfix/master.cf: Permission denied', exitCode: 1),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('Failed to set the smtp/inet master.cf service via postconf')
+            ->assertFailed();
+
+        Process::assertDidntRun('systemctl reload postfix');
     });
 });
 
 describe('postfix config values', function () {
-    it('writes the queue lifetime values to main.cf', function () {
+    it('writes the receive-only and hardening parameters via postconf', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))
-            ->toContain('maximal_queue_lifetime = 5d')
-            ->toContain('bounce_queue_lifetime = 0');
+        Process::assertRan("postconf -e 'myhostname = example.com'");
+        Process::assertRan("postconf -e 'default_transport = error'");
+        Process::assertRan("postconf -e 'relay_transport = error'");
+        Process::assertRan("postconf -e 'local_recipient_maps = '");
+        Process::assertRan("postconf -e 'message_size_limit = 26214400'");
+        Process::assertRan('postconf -e \'smtpd_banner = $myhostname ESMTP\'');
+        Process::assertRan("postconf -e 'disable_vrfy_command = yes'");
+        Process::assertRan("postconf -e 'smtpd_client_connection_rate_limit = 30'");
+        Process::assertRan("postconf -e 'smtpd_data_restrictions = reject_unauth_pipelining'");
+        Process::assertRan("postconf -e 'smtpd_timeout = 120s'");
     });
 
-    it('replaces existing queue lifetime values instead of appending', function () {
-        file_put_contents(
-            $this->postfixDir.'/main.cf',
-            "myhostname = old.example.com\nmaximal_queue_lifetime = 1d\nbounce_queue_lifetime = 1d\n"
-        );
+    it('writes the queue lifetime values via postconf', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        // bounce_queue_lifetime governs all null-Envelope-Sender mail,
+        // including accepted inbound DSNs, so it matches
+        // maximal_queue_lifetime instead of deleting that mail after a
+        // single tempfailed delivery attempt.
+        Process::assertRan("postconf -e 'maximal_queue_lifetime = 5d'");
+        Process::assertRan("postconf -e 'bounce_queue_lifetime = 5d'");
+    });
+
+    it('skips writing a parameter whose current value already matches', function () {
+        $this->postconf->params['maximal_queue_lifetime'] = '5d';
 
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
-        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
-
-        expect($mainConfig)
-            ->toContain('maximal_queue_lifetime = 5d')
-            ->toContain('bounce_queue_lifetime = 0');
-        expect(substr_count($mainConfig, 'maximal_queue_lifetime ='))->toBe(1);
-        expect(substr_count($mainConfig, 'bounce_queue_lifetime ='))->toBe(1);
+        Process::assertDidntRun("postconf -e 'maximal_queue_lifetime = 5d'");
+        Process::assertRan("postconf -e 'bounce_queue_lifetime = 5d'");
     });
 
-    it('replaces the exclusion-list TLS protocols line with >=TLSv1.2 when TLS is configured', function () {
-        file_put_contents(
-            $this->postfixDir.'/main.cf',
-            "myhostname = old.example.com\nsmtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1\n"
-        );
+    it('repeats no parameter writes on an unchanged re-run', function () {
+        $arguments = ['domain' => 'example.com', '--user' => 'deploy'];
+
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+
+        Process::assertRanTimes("postconf -e 'myhostname = example.com'", 1);
+        Process::assertRanTimes("postconf -e 'maximal_queue_lifetime = 5d'", 1);
+        Process::assertRanTimes("postconf -e 'bounce_queue_lifetime = 5d'", 1);
+    });
+
+    it('writes the TLS configuration when cert and key are provided', function () {
+        // An exclusion-list value a pre-hardening install may carry; setup
+        // must replace it with the minimum-version form.
+        $this->postconf->params['smtpd_tls_protocols'] = '!SSLv2, !SSLv3, !TLSv1, !TLSv1.1';
+
         file_put_contents($this->postfixDir.'/server.crt', 'cert');
         file_put_contents($this->postfixDir.'/server.key', 'key');
 
@@ -235,37 +305,19 @@ describe('postfix config values', function () {
             '--tls-key' => $this->postfixDir.'/server.key',
         ])->assertSuccessful();
 
-        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
-
-        expect($mainConfig)->toContain('smtpd_tls_protocols = >=TLSv1.2');
-        expect(substr_count($mainConfig, 'smtpd_tls_protocols ='))->toBe(1);
-
-        @unlink($this->postfixDir.'/server.crt');
-        @unlink($this->postfixDir.'/server.key');
+        Process::assertRan("postconf -e 'smtpd_tls_cert_file = {$this->postfixDir}/server.crt'");
+        Process::assertRan("postconf -e 'smtpd_tls_key_file = {$this->postfixDir}/server.key'");
+        Process::assertRan("postconf -e 'smtpd_tls_security_level = may'");
+        Process::assertRan("postconf -e 'smtpd_tls_protocols = >=TLSv1.2'");
+        Process::assertRan("postconf -e 'smtp_tls_security_level = none'");
     });
 
-    it('keeps the queue lifetime and TLS protocol lines single across re-runs', function () {
-        file_put_contents($this->postfixDir.'/server.crt', 'cert');
-        file_put_contents($this->postfixDir.'/server.key', 'key');
+    it('writes no TLS parameters without cert and key', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('TLS is not configured')
+            ->assertSuccessful();
 
-        $arguments = [
-            'domain' => 'example.com',
-            '--user' => 'deploy',
-            '--tls-cert' => $this->postfixDir.'/server.crt',
-            '--tls-key' => $this->postfixDir.'/server.key',
-        ];
-
-        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
-        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
-
-        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
-
-        expect(substr_count($mainConfig, 'maximal_queue_lifetime ='))->toBe(1);
-        expect(substr_count($mainConfig, 'bounce_queue_lifetime ='))->toBe(1);
-        expect(substr_count($mainConfig, 'smtpd_tls_protocols ='))->toBe(1);
-
-        @unlink($this->postfixDir.'/server.crt');
-        @unlink($this->postfixDir.'/server.key');
+        Process::assertDidntRun(fn (PendingProcess $process) => str_contains($process->command, 'smtpd_tls_cert_file'));
     });
 });
 
@@ -274,36 +326,38 @@ describe('postscreen topology', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
-        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
+        Process::assertRan("postconf -M 'smtp/inet=smtp inet n - - - 1 postscreen'");
+        Process::assertRan("postconf -M 'smtpd/pass=smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy'");
+        Process::assertRan("postconf -M 'dnsblog/unix=dnsblog unix - - - - 0 dnsblog'");
+        Process::assertRan("postconf -M 'tlsproxy/unix=tlsproxy unix - - - - 0 tlsproxy'");
+        Process::assertRan("postconf -e 'postscreen_greet_action = enforce'");
 
-        expect($masterConfig)
-            ->toContain('smtp inet n - - - 1 postscreen')
-            ->toContain('smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy')
-            ->toContain('dnsblog unix - - - - 0 dnsblog')
-            ->toContain('tlsproxy unix - - - - 0 tlsproxy')
-            ->toContain('user=deploy argv=');
-
-        expect(file_get_contents($this->postfixDir.'/main.cf'))
-            ->toContain('postscreen_greet_action = enforce');
+        expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy argv=');
     });
 
-    it('keeps the master.cf service entries single across re-runs', function () {
+    it('skips a master.cf write when the column-aligned entry already matches', function () {
+        // postconf -M prints entries column-aligned; the comparison must
+        // recognize the entry as current regardless of whitespace.
+        $this->postconf->services['smtp/inet'] = 'smtp       inet  n       -       -       -       1       postscreen';
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        Process::assertDidntRun("postconf -M 'smtp/inet=smtp inet n - - - 1 postscreen'");
+    });
+
+    it('repeats no master.cf writes on an unchanged re-run', function () {
         $arguments = ['domain' => 'example.com', '--user' => 'deploy'];
 
         $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
         $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
 
-        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
-
-        expect(preg_match_all('/^smtp\s+inet/m', $masterConfig))->toBe(1);
-        expect(preg_match_all('/^smtpd\s+pass/m', $masterConfig))->toBe(1);
-        expect(preg_match_all('/^dnsblog\s+unix/m', $masterConfig))->toBe(1);
-        expect(preg_match_all('/^tlsproxy\s+unix/m', $masterConfig))->toBe(1);
-        expect(preg_match_all('/^notifiable\s+unix/m', $masterConfig))->toBe(1);
-
-        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
-
-        expect(substr_count($mainConfig, 'postscreen_greet_action ='))->toBe(1);
+        Process::assertRanTimes("postconf -M 'smtp/inet=smtp inet n - - - 1 postscreen'", 1);
+        Process::assertRanTimes("postconf -M 'dnsblog/unix=dnsblog unix - - - - 0 dnsblog'", 1);
+        Process::assertRanTimes(
+            fn (PendingProcess $process) => str_starts_with($process->command, "postconf -M 'notifiable/unix="),
+            1
+        );
     });
 });
 
@@ -314,11 +368,12 @@ describe('SPF verification', function () {
 
         Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python');
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))
-            ->toContain('check_policy_service unix:private/policy-spf')
-            ->toContain('policy-spf_time_limit = 3600s');
-        expect(file_get_contents($this->postfixDir.'/master.cf'))
-            ->toContain('policy-spf unix');
+        Process::assertRan(
+            "postconf -e 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, "
+            ."reject_unknown_recipient_domain, reject_unauth_destination, check_policy_service unix:private/policy-spf'"
+        );
+        Process::assertRan("postconf -e 'policy-spf_time_limit = 3600s'");
+        Process::assertRan("postconf -M 'policy-spf/unix=policy-spf unix - n n - 0 spawn user=policyd-spf argv=/usr/bin/policyd-spf'");
     });
 
     it('skips SPF verification with --without-spf', function () {
@@ -329,8 +384,7 @@ describe('SPF verification', function () {
         Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python');
         Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine');
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))
-            ->not->toContain('check_policy_service');
+        expect($this->postconf->params['smtpd_recipient_restrictions'])->not->toContain('check_policy_service');
     });
 
     it('falls back to spf-engine when postfix-policyd-spf-python is unavailable', function () {
@@ -346,7 +400,7 @@ describe('SPF verification', function () {
 
         Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine');
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))
+        expect($this->postconf->params['smtpd_recipient_restrictions'])
             ->toContain('check_policy_service unix:private/policy-spf');
     });
 
@@ -371,12 +425,12 @@ describe('SPF verification', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->toContain('check_policy_service');
+        expect($this->postconf->params['smtpd_recipient_restrictions'])->toContain('check_policy_service');
 
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy', '--without-spf' => true])
             ->assertSuccessful();
 
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->not->toContain('check_policy_service');
+        expect($this->postconf->params['smtpd_recipient_restrictions'])->not->toContain('check_policy_service');
     });
 
     it('keeps the SPF configuration idempotent across re-runs', function () {
@@ -385,12 +439,8 @@ describe('SPF verification', function () {
         $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
         $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
 
-        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
-        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
-
-        expect(substr_count($mainConfig, 'policy-spf_time_limit ='))->toBe(1);
-        expect(substr_count($mainConfig, 'check_policy_service'))->toBe(1);
-        expect(preg_match_all('/^policy-spf\s+unix/m', $masterConfig))->toBe(1);
+        Process::assertRanTimes("postconf -e 'policy-spf_time_limit = 3600s'", 1);
+        Process::assertRanTimes("postconf -M 'policy-spf/unix=policy-spf unix - n n - 0 spawn user=policyd-spf argv=/usr/bin/policyd-spf'", 1);
     });
 });
 
@@ -403,9 +453,10 @@ describe('sender access map sync', function () {
 
         expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))
             ->toContain("spammer@bad.test\tREJECT");
-        expect(file_get_contents($this->postfixDir.'/main.cf'))->toContain(
-            'smtpd_sender_restrictions = check_sender_access hash:'.$this->postfixDir.'/notifiable_sender_blacklist, '
-            .'reject_non_fqdn_sender, reject_unknown_sender_domain'
+
+        Process::assertRan(
+            "postconf -e 'smtpd_sender_restrictions = check_sender_access hash:{$this->postfixDir}/notifiable_sender_blacklist, "
+            ."reject_non_fqdn_sender, reject_unknown_sender_domain'"
         );
 
         Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist.tmp');
@@ -448,6 +499,10 @@ describe('postflight checks', function () {
         Process::assertRan('postfix check');
         Process::assertRan('postconf -x mydestination');
         Process::assertRan('systemctl reload postfix');
+
+        // The reload also activates the inner sync's --no-reload writes, so
+        // no reload-pending marker may remain.
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeFalse();
     });
 
     it('fails when the Postfix reload fails', function () {
@@ -461,5 +516,9 @@ describe('postflight checks', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->expectsOutputToContain('Failed to reload Postfix')
             ->assertFailed();
+
+        // The inner sync's writes were never activated; the marker makes the
+        // next notifiable:sync-postfix run retry the reload.
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
     });
 });
