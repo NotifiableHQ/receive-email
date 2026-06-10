@@ -101,10 +101,29 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $escapedDomain = escapeshellarg($domain);
 
-        $this->line(Process::run('apt-get update')->output());
+        $update = Process::run('apt-get update');
+
+        if (! $update->successful()) {
+            throw new RuntimeException(
+                '`apt-get update` failed; aborting setup before any configuration is changed: '
+                .trim($update->output().' '.$update->errorOutput())
+            );
+        }
+
+        $this->line($update->output());
         $this->line(Process::run("echo \"postfix postfix/mailname string {$escapedDomain}\" | debconf-set-selections")->output());
         $this->line(Process::run("echo \"postfix postfix/main_mailer_type string 'Internet Site'\" | debconf-set-selections")->output());
-        $this->line(Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix')->output());
+
+        $install = Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+
+        if (! $install->successful()) {
+            throw new RuntimeException(
+                '`apt-get install -y postfix` failed; aborting setup before any configuration is changed: '
+                .trim($install->output().' '.$install->errorOutput())
+            );
+        }
+
+        $this->line($install->output());
     }
 
     /**

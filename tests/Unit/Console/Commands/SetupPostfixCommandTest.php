@@ -170,6 +170,51 @@ describe('preflight checks', function () {
         expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy');
     });
 
+    it('installs Postfix when it is not already installed', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        Process::assertRan('apt-get update');
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+    });
+
+    it('aborts before changing any configuration when apt-get update fails', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+            'apt-get update' => Process::result(
+                errorOutput: 'E: Could not get lock /var/lib/apt/lists/lock',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('`apt-get update` failed')
+            ->assertFailed();
+
+        Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+        Process::assertDidntRun(fn (PendingProcess $process) => str_starts_with($process->command, 'postconf -e'));
+    });
+
+    it('aborts before changing any configuration when apt-get install fails', function () {
+        Process::fake([
+            'dpkg -l | grep postfix' => Process::result(''),
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix' => Process::result(
+                errorOutput: 'E: Unable to locate package postfix',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('`apt-get install -y postfix` failed')
+            ->assertFailed();
+
+        Process::assertDidntRun(fn (PendingProcess $process) => str_starts_with($process->command, 'postconf -e'));
+    });
+
     it('aborts before reloading when postconf fails to write a parameter', function () {
         Process::fake([
             'postconf -e *' => Process::result(errorOutput: 'postconf: fatal: open /etc/postfix/main.cf: Permission denied', exitCode: 1),
