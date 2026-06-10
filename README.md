@@ -209,12 +209,14 @@ Register the command in `routes/console.php`:
 ```php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('notifiable:import-mail-log')
+Schedule::command('notifiable:import-mail-log --isolated')
     ->everyMinute()
     ->withoutOverlapping();
 ```
 
 The first run records the current end of the mail log and imports nothing, so enabling the importer on a long-lived server does not flood your listeners with historical rejections. To import the existing history instead, make the first run `php artisan notifiable:import-mail-log --from-beginning` (the flag has no effect once an offset is stored). You can also run the command manually at any time.
+
+Overlapping imports read from the same offset and dispatch duplicate events, so the command implements Laravel's [`Isolatable`](https://laravel.com/docs/artisan#isolatable-commands) contract and the schedule above runs it with `--isolated`: a run that finds another import in progress is skipped with a success exit code. Pass `--isolated` on manual runs too whenever the scheduler is active — `withoutOverlapping()` only keeps scheduled runs from overlapping each other, while the `--isolated` mutex is shared across every entry point.
 
 Each subsequent run resumes from the persisted offset. Delivery is **at-least-once with a minimal duplicate window**: the offset is written atomically after every dispatched rejection, so a crash, failed offset write, or throwing listener mid-run re-dispatches at most the single line that was in flight when the run died — never the whole batch. Make listeners idempotent (for example, key on `rawLine` plus its timestamp) if duplicates matter to your application.
 

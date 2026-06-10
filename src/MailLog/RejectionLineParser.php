@@ -119,7 +119,12 @@ class RejectionLineParser
         return match (true) {
             str_contains($reason, 'spf') => RejectionClass::Spf,
             str_contains($reason, 'helo command rejected') => RejectionClass::Helo,
-            str_contains($reason, 'sender address rejected') => RejectionClass::EnvelopeList,
+            // reject_non_fqdn_sender ("need fully-qualified address") and
+            // reject_unknown_sender_domain ("Domain not found") share the
+            // "Sender address rejected" prefix; only the "Access denied"
+            // detail marks an Envelope Sender list decision (logged by both
+            // the blacklist REJECT and the whitelist catch-all reject).
+            str_contains($reason, 'sender address rejected: access denied') => RejectionClass::EnvelopeList,
             str_contains($reason, 'rate limit'),
             str_contains($reason, 'too many connections') => RejectionClass::RateLimit,
             default => $default,

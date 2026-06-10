@@ -3,6 +3,7 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Console\Isolatable;
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
 use Notifiable\ReceiveEmail\MailLog\MailLogOffsetStore;
@@ -10,7 +11,12 @@ use Notifiable\ReceiveEmail\MailLog\MailLogPosition;
 use Notifiable\ReceiveEmail\MailLog\RejectionLineParser;
 use Throwable;
 
-class ImportMailLogCommand extends Command
+/**
+ * Concurrent imports read the same offset and dispatch duplicate events;
+ * Isolatable lets every entry point (scheduler and manual) contend on one
+ * command mutex via --isolated.
+ */
+class ImportMailLogCommand extends Command implements Isolatable
 {
     /** @var string */
     protected $signature = 'notifiable:import-mail-log

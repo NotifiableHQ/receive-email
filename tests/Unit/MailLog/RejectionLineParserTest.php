@@ -65,6 +65,28 @@ it('classifies HELO rejections', function () {
         ->and($rejection->clientIp)->toBe('192.0.2.9');
 });
 
+it('does not classify non-FQDN sender rejections as envelope-list', function () {
+    $line = 'Jun  9 12:03:40 mail postfix/smtpd[31022]: NOQUEUE: reject: RCPT from unknown[203.0.113.110]: 504 5.5.2 <bareuser>: Sender address rejected: need fully-qualified address; from=<bareuser> to=<inbox@receiver.test> proto=SMTP helo=<bare.example>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->not->toBe(RejectionClass::EnvelopeList)
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Other)
+        ->and($rejection->envelopeSender)->toBe('bareuser');
+});
+
+it('does not classify unknown-sender-domain rejections as envelope-list', function () {
+    $line = 'Jun  9 12:03:50 mail postfix/smtpd[31023]: NOQUEUE: reject: RCPT from mail.ghost.example[203.0.113.111]: 450 4.1.8 <user@ghost.example>: Sender address rejected: Domain not found; from=<user@ghost.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.ghost.example>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->not->toBe(RejectionClass::EnvelopeList)
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Other)
+        ->and($rejection->envelopeSender)->toBe('user@ghost.example');
+});
+
 it('classifies in-session rate-limit rejections', function () {
     $line = 'Jun  9 12:04:00 mail postfix/smtpd[31013]: NOQUEUE: reject: RCPT from fast.example[203.0.113.70]: 450 4.7.1 <inbox@receiver.test>: Recipient address rejected: rate limit exceeded; from=<bulk@fast.example> to=<inbox@receiver.test> proto=ESMTP helo=<fast.example>';
 

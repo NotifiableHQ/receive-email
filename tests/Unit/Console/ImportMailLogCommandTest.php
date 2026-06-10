@@ -1,6 +1,8 @@
 <?php
 
+use Illuminate\Console\CacheCommandMutex;
 use Illuminate\Support\Facades\Event;
+use Notifiable\ReceiveEmail\Console\Commands\ImportMailLogCommand;
 use Notifiable\ReceiveEmail\Enums\RejectionClass;
 use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
 
@@ -38,11 +40,11 @@ it('parses fixture rejections into SmtpRejectionObserved events', function () {
     copy(mailLogFixture('mixed.log'), $this->logPath);
 
     $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])
-        ->expectsOutputToContain('Observed 10 SMTP-time rejection(s).')
+        ->expectsOutputToContain('Observed 12 SMTP-time rejection(s).')
         ->expectsOutputToContain('Skipped 1 unparseable rejection line(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 12);
 
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->rejectionClass === RejectionClass::EnvelopeList
@@ -60,6 +62,23 @@ it('parses fixture rejections into SmtpRejectionObserved events', function () {
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->rejectionClass === RejectionClass::Helo
             && $event->rejection->clientIp === '192.0.2.9';
+    });
+
+    // reject_non_fqdn_sender and reject_unknown_sender_domain also log
+    // "Sender address rejected" but are not Envelope Sender list decisions.
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::Other
+            && $event->rejection->envelopeSender === 'bareuser';
+    });
+
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::Other
+            && $event->rejection->envelopeSender === 'user@ghost.example';
+    });
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->rejectionClass === RejectionClass::EnvelopeList
+            && in_array($event->rejection->envelopeSender, ['bareuser', 'user@ghost.example'], true);
     });
 
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
@@ -161,13 +180,13 @@ it('persists the offset between runs and never duplicates events', function () {
 
     $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true])->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 12);
 
     $this->artisan('notifiable:import-mail-log')
         ->expectsOutputToContain('Observed 0 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 10);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 12);
 });
 
 it('imports only lines appended since the previous run', function () {
@@ -186,7 +205,7 @@ it('imports only lines appended since the previous run', function () {
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 13);
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->envelopeSender === 'late@blocked.example';
     });
@@ -208,7 +227,7 @@ it('restarts from the new file after log rotation', function () {
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 13);
 });
 
 it('restarts from the beginning when the log is truncated in place', function () {
@@ -225,7 +244,7 @@ it('restarts from the beginning when the log is truncated in place', function ()
         ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
         ->assertSuccessful();
 
-    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 11);
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 13);
 });
 
 it('leaves a partially written final line for the next run', function () {
@@ -348,4 +367,34 @@ it('fails with guidance when the mail log is missing or unreadable', function ()
         ->assertFailed();
 
     Event::assertNotDispatched(SmtpRejectionObserved::class);
+});
+
+it('skips an isolated run while another import holds the command mutex', function () {
+    Event::fake();
+
+    config()->set('cache.default', 'array');
+
+    copy(mailLogFixture('mixed.log'), $this->logPath);
+
+    $mutex = app(CacheCommandMutex::class);
+    $command = app(ImportMailLogCommand::class);
+
+    expect($mutex->create($command))->toBeTrue();
+
+    try {
+        $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true, '--isolated' => true])
+            ->expectsOutputToContain('already running')
+            ->assertSuccessful();
+    } finally {
+        $mutex->forget($command);
+    }
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
+
+    // Once the mutex is free, an isolated run imports normally.
+    $this->artisan('notifiable:import-mail-log', ['--from-beginning' => true, '--isolated' => true])
+        ->expectsOutputToContain('Observed 12 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 12);
 });
