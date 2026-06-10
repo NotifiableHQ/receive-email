@@ -86,8 +86,7 @@ You'll have to show `Advance Settings` to select this.
 ```bash
 sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
     --tls-cert=/etc/nginx/ssl/your-application-domain.com/server.crt \
-    --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key \
-    --with-spf
+    --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key
 ```
 
 **Available options:**
@@ -97,7 +96,7 @@ sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
 | `--user=forge` | The system user Postfix runs the pipe command as. Defaults to `$SUDO_USER` when run with `sudo`, otherwise the current user. Setup aborts if the resolved user is `root`. |
 | `--tls-cert=` | Path to the TLS certificate file (PEM format). Enables opportunistic TLS for inbound SMTP. |
 | `--tls-key=` | Path to the TLS private key file (PEM format). Must be provided together with `--tls-cert`. |
-| `--with-spf` | Installs `postfix-policyd-spf-python` and configures SPF verification for inbound mail. |
+| `--without-spf` | Skips SPF verification setup. By default, setup installs `postfix-policyd-spf-python` (or `spf-engine` on newer releases) and configures SPF verification for inbound mail. |
 | `--force` | Skips the Ubuntu 24.04+ operating system check, for other Debian-like systems. |
 
 6. Add the following DNS records to your domain:

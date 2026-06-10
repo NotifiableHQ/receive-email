@@ -28,6 +28,8 @@ beforeEach(function () {
         'dpkg -l | grep postfix' => Process::result('ii  postfix  3.8.6-1  amd64  High-performance mail transport agent'),
         'postfix check' => Process::result(),
         'postconf -x mydestination' => Process::result('mydestination = example.com, localhost.localdomain, localhost'),
+        'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python' => Process::result(),
+        'DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine' => Process::result(),
         '*' => Process::result(),
     ]);
 });
@@ -292,6 +294,93 @@ describe('postscreen topology', function () {
         $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
 
         expect(substr_count($mainConfig, 'postscreen_greet_action ='))->toBe(1);
+    });
+});
+
+describe('SPF verification', function () {
+    it('configures SPF verification by default', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python');
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))
+            ->toContain('check_policy_service unix:private/policy-spf')
+            ->toContain('policy-spf_time_limit = 3600s');
+        expect(file_get_contents($this->postfixDir.'/master.cf'))
+            ->toContain('policy-spf unix');
+    });
+
+    it('skips SPF verification with --without-spf', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy', '--without-spf' => true])
+            ->expectsOutputToContain('Skipping SPF verification (--without-spf)')
+            ->assertSuccessful();
+
+        Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python');
+        Process::assertDidntRun('DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine');
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))
+            ->not->toContain('check_policy_service');
+    });
+
+    it('falls back to spf-engine when postfix-policyd-spf-python is unavailable', function () {
+        Process::fake([
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python' => Process::result(
+                errorOutput: 'E: Unable to locate package postfix-policyd-spf-python',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        Process::assertRan('DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine');
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))
+            ->toContain('check_policy_service unix:private/policy-spf');
+    });
+
+    it('aborts with a clear error when no SPF policy daemon package can be installed', function () {
+        Process::fake([
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python' => Process::result(
+                errorOutput: 'E: Unable to locate package postfix-policyd-spf-python',
+                exitCode: 100,
+            ),
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y spf-engine' => Process::result(
+                errorOutput: 'E: Unable to locate package spf-engine',
+                exitCode: 100,
+            ),
+        ]);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->expectsOutputToContain('Failed to install the SPF policy daemon')
+            ->assertFailed();
+    });
+
+    it('removes the SPF policy check when re-run with --without-spf', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))->toContain('check_policy_service');
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy', '--without-spf' => true])
+            ->assertSuccessful();
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))->not->toContain('check_policy_service');
+    });
+
+    it('keeps the SPF configuration idempotent across re-runs', function () {
+        $arguments = ['domain' => 'example.com', '--user' => 'deploy'];
+
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+
+        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
+        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
+
+        expect(substr_count($mainConfig, 'policy-spf_time_limit ='))->toBe(1);
+        expect(substr_count($mainConfig, 'check_policy_service'))->toBe(1);
+        expect(preg_match_all('/^policy-spf\s+unix/m', $masterConfig))->toBe(1);
     });
 });
 

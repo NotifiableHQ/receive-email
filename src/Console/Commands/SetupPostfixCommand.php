@@ -37,7 +37,7 @@ class SetupPostfixCommand extends ConsoleCommand
         {--user= : The system user to run the pipe command as. Defaults to $SUDO_USER, then the current user.}
         {--tls-cert= : Path to the TLS certificate file (PEM format).}
         {--tls-key= : Path to the TLS private key file (PEM format).}
-        {--with-spf : Install and configure SPF verification via policyd-spf.}
+        {--without-spf : Skip SPF verification setup (not recommended; SPF is what makes the Envelope Sender trustworthy).}
         {--force : Skip the operating system requirement check (Ubuntu 24.04+).}';
 
     /** @var string */
@@ -67,11 +67,13 @@ class SetupPostfixCommand extends ConsoleCommand
             $this->configureMainConfigFile($domain);
             $this->configureMasterConfigFile($user);
 
-            if ($this->option('with-spf')) {
-                $this->configureSPF();
+            if ($this->option('without-spf')) {
+                $this->info("\nSkipping SPF verification (--without-spf): the Envelope Sender of inbound mail will not be verified.");
             } else {
-                $this->info("\nFor production use, consider --with-spf for SPF verification, and rspamd for DKIM/DMARC.");
+                $this->configureSPF();
             }
+
+            $this->info("\nFor DKIM/DMARC verification, consider rspamd.");
 
             $this->verifyPostfixConfiguration($domain);
             $this->reloadPostfix();
@@ -246,7 +248,7 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nConfiguring SPF verification\n");
 
-        $this->line(Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python')->output());
+        $this->installSpfPolicyDaemon();
 
         $mainConfig = $this->getConfigPath('main.cf');
         $this->upsertLine($mainConfig, 'policy-spf_time_limit = 3600s');
@@ -257,6 +259,31 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $masterConfig = $this->getConfigPath('master.cf');
         $this->upsertLine($masterConfig, 'policy-spf unix -  n  n  -  0  spawn user=policyd-spf argv=/usr/bin/policyd-spf');
+    }
+
+    /**
+     * Ubuntu 24.04 packages the SPF policy daemon as
+     * postfix-policyd-spf-python; upstream is migrating to spf-engine,
+     * so later releases may only carry that name. Both ship the same
+     * /usr/bin/policyd-spf entry point.
+     */
+    private function installSpfPolicyDaemon(): void
+    {
+        foreach (['postfix-policyd-spf-python', 'spf-engine'] as $package) {
+            $install = Process::run("DEBIAN_FRONTEND=noninteractive apt-get install -y {$package}");
+
+            if ($install->successful()) {
+                $this->line($install->output());
+
+                return;
+            }
+        }
+
+        throw new RuntimeException(
+            'Failed to install the SPF policy daemon: neither postfix-policyd-spf-python nor spf-engine could be '
+            .'installed. SPF verification is what makes Envelope Sender filtering trustworthy; '
+            .'pass --without-spf to set up without it.'
+        );
     }
 
     /**
