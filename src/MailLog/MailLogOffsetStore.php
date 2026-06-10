@@ -2,6 +2,8 @@
 
 namespace Notifiable\ReceiveEmail\MailLog;
 
+use RuntimeException;
+
 class MailLogOffsetStore
 {
     public function __construct(
@@ -9,8 +11,8 @@ class MailLogOffsetStore
     ) {}
 
     /**
-     * A missing or corrupt state file means starting over from the
-     * beginning of the log, never failing.
+     * A missing or corrupt state file reads as no stored position, never
+     * failing; the importer treats that as a first run.
      */
     public function get(): ?MailLogPosition
     {
@@ -35,17 +37,38 @@ class MailLogOffsetStore
         return new MailLogPosition(is_int($inode) ? $inode : null, $state['offset']);
     }
 
+    /**
+     * Writes to a temporary file in the same directory and renames it into
+     * place, so the state file always holds either the old or the new
+     * position in full — never a torn write.
+     *
+     * @throws RuntimeException when the position cannot be persisted.
+     */
     public function put(MailLogPosition $position): void
     {
         $directory = dirname($this->path);
 
-        if (! is_dir($directory)) {
-            mkdir($directory, 0755, true);
+        if (! is_dir($directory) && ! @mkdir($directory, 0755, true) && ! is_dir($directory)) {
+            throw new RuntimeException("Could not create offset directory [{$directory}].");
         }
 
-        file_put_contents($this->path, json_encode([
+        $contents = json_encode([
             'inode' => $position->inode,
             'offset' => $position->offset,
-        ], JSON_THROW_ON_ERROR));
+        ], JSON_THROW_ON_ERROR);
+
+        $temporary = $this->path.'.tmp';
+
+        if (@file_put_contents($temporary, $contents) !== strlen($contents)) {
+            @unlink($temporary);
+
+            throw new RuntimeException("Could not write offset file [{$temporary}].");
+        }
+
+        if (! @rename($temporary, $this->path)) {
+            @unlink($temporary);
+
+            throw new RuntimeException("Could not move offset file into place at [{$this->path}].");
+        }
     }
 }

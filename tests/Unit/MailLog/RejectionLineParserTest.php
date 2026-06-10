@@ -99,6 +99,79 @@ it('parses postscreen rejections', function () {
         ->and($rejection->recipient)->toBe('inbox@receiver.test');
 });
 
+it('parses a postscreen pregreet drop', function () {
+    $line = 'Jun  9 12:11:10 mail postfix/postscreen[31021]: PREGREET 11 after 0.08 from [203.0.113.101]:25372: EHLO ylmf-pc\r\n';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($this->parser->isRejectionLine($line))->toBeTrue()
+        ->and($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Postscreen)
+        ->and($rejection->clientHost)->toBeNull()
+        ->and($rejection->clientIp)->toBe('203.0.113.101')
+        ->and($rejection->envelopeSender)->toBeNull()
+        ->and($rejection->recipient)->toBeNull()
+        ->and($rejection->rawLine)->toBe($line);
+});
+
+it('parses a postscreen hangup drop', function () {
+    $line = 'Jun  9 12:11:25 mail postfix/postscreen[31021]: HANGUP after 1.9 from [203.0.113.102]:38492 in tests after SMTP handshake';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($this->parser->isRejectionLine($line))->toBeTrue()
+        ->and($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Postscreen)
+        ->and($rejection->clientIp)->toBe('203.0.113.102')
+        ->and($rejection->envelopeSender)->toBeNull();
+});
+
+it('parses a postscreen dnsbl rank drop', function () {
+    $line = 'Jun  9 12:11:40 mail postfix/postscreen[31021]: DNSBL rank 4 for [203.0.113.103]:42061';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($this->parser->isRejectionLine($line))->toBeTrue()
+        ->and($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Postscreen)
+        ->and($rejection->clientIp)->toBe('203.0.113.103');
+});
+
+it('classifies a postscreen connection-count rejection as rate-limit', function () {
+    $line = 'Jun  9 12:11:55 mail postfix/postscreen[31021]: NOQUEUE: reject: CONNECT from [203.0.113.104]:51246: too many connections';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::RateLimit)
+        ->and($rejection->clientIp)->toBe('203.0.113.104')
+        ->and($rejection->envelopeSender)->toBeNull();
+});
+
+it('classifies other postscreen connect rejections as postscreen', function () {
+    $line = 'Jun  9 12:11:58 mail postfix/postscreen[31021]: NOQUEUE: reject: CONNECT from [203.0.113.105]:41833: all server ports busy';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection)->not->toBeNull()
+        ->and($rejection->rejectionClass)->toBe(RejectionClass::Postscreen)
+        ->and($rejection->clientIp)->toBe('203.0.113.105');
+});
+
+it('does not treat ordinary postscreen lines as rejections', function () {
+    $lines = [
+        'Jun  9 12:11:00 mail postfix/postscreen[31021]: CONNECT from [203.0.113.101]:25372 to [198.51.100.2]:25',
+        'Jun  9 12:11:02 mail postfix/postscreen[31021]: PASS NEW [198.51.100.10]:33672',
+        'Jun  9 12:11:03 mail postfix/postscreen[31021]: PASS OLD [198.51.100.10]:33688',
+        'Jun  9 12:11:04 mail postfix/postscreen[31021]: DISCONNECT [203.0.113.101]:25372',
+        'Jun  9 12:11:05 mail postfix/postscreen[31021]: WHITELISTED [198.51.100.10]:33672',
+    ];
+
+    foreach ($lines as $line) {
+        expect($this->parser->isRejectionLine($line))->toBeFalse();
+    }
+});
+
 it('classifies unrecognized reject reasons as other', function () {
     $line = 'Jun  9 12:08:00 mail postfix/smtpd[31017]: NOQUEUE: reject: RCPT from open.example[203.0.113.80]: 554 5.7.1 <other@elsewhere.test>: Relay access denied; from=<sender@open.example> to=<other@elsewhere.test> proto=ESMTP helo=<open.example>';
 

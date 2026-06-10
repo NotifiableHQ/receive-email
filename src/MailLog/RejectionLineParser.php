@@ -19,6 +19,25 @@ class RejectionLineParser
 
     private const POSTSCREEN_REJECT_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sNOQUEUE:\sreject:\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+:\s(?<reason>.*?);\sfrom=<(?<sender>[^>]*)>,\sto=<(?<recipient>[^>]*)>/';
 
+    /**
+     * Postscreen's CONNECT-stage rejects ("too many connections", "all
+     * server ports busy") happen before any envelope exists, so the line
+     * carries only the client IP and a reason.
+     */
+    private const POSTSCREEN_CONNECT_REJECT_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sNOQUEUE:\sreject:\sCONNECT\sfrom\s\[(?<ip>[^\]]+)\]:\d+:\s(?<reason>.+)$/';
+
+    /**
+     * Postscreen in enforce mode drops clients without ever logging a
+     * NOQUEUE line: PREGREET (client talked before the server greeting),
+     * HANGUP (client disconnected during postscreen's tests), and DNSBL
+     * rank (client crossed the blocklist score threshold).
+     */
+    private const POSTSCREEN_PREGREET_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sPREGREET\s\d+\safter\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+:/';
+
+    private const POSTSCREEN_HANGUP_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sHANGUP\safter\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+\sin\s.+$/';
+
+    private const POSTSCREEN_DNSBL_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sDNSBL\srank\s\d+\sfor\s\[(?<ip>[^\]]+)\]:\d+$/';
+
     private const RATE_LIMIT_WARNING_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/smtpd\[\d+\]:\swarning:\sConnection\s(?:rate|concurrency)\slimit\sexceeded:\s\d+\sfrom\s(?<host>[^\[]+)\[(?<ip>[^\]]+)\]/';
 
     /**
@@ -28,7 +47,8 @@ class RejectionLineParser
     public function isRejectionLine(string $line): bool
     {
         return str_contains($line, 'NOQUEUE: reject:')
-            || (str_contains($line, 'warning: Connection') && str_contains($line, 'limit exceeded'));
+            || (str_contains($line, 'warning: Connection') && str_contains($line, 'limit exceeded'))
+            || $this->isPostscreenDropLine($line);
     }
 
     public function parse(string $line): ?SmtpRejection
@@ -41,11 +61,32 @@ class RejectionLineParser
             return $this->makeRejection($line, $matches, RejectionClass::Postscreen);
         }
 
+        if (preg_match(self::POSTSCREEN_CONNECT_REJECT_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, $this->classify($matches['reason'], RejectionClass::Postscreen));
+        }
+
+        if (preg_match(self::POSTSCREEN_PREGREET_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1
+            || preg_match(self::POSTSCREEN_HANGUP_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1
+            || preg_match(self::POSTSCREEN_DNSBL_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, RejectionClass::Postscreen);
+        }
+
         if (preg_match(self::RATE_LIMIT_WARNING_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
             return $this->makeRejection($line, $matches, RejectionClass::RateLimit);
         }
 
         return null;
+    }
+
+    private function isPostscreenDropLine(string $line): bool
+    {
+        if (! str_contains($line, 'postfix/postscreen[')) {
+            return false;
+        }
+
+        return str_contains($line, ': PREGREET ')
+            || str_contains($line, ': HANGUP after ')
+            || str_contains($line, ': DNSBL rank ');
     }
 
     /**
@@ -71,7 +112,7 @@ class RejectionLineParser
         );
     }
 
-    private function classify(string $reason): RejectionClass
+    private function classify(string $reason, RejectionClass $default = RejectionClass::Other): RejectionClass
     {
         $reason = strtolower($reason);
 
@@ -81,7 +122,7 @@ class RejectionLineParser
             str_contains($reason, 'sender address rejected') => RejectionClass::EnvelopeList,
             str_contains($reason, 'rate limit'),
             str_contains($reason, 'too many connections') => RejectionClass::RateLimit,
-            default => RejectionClass::Other,
+            default => $default,
         };
     }
 
