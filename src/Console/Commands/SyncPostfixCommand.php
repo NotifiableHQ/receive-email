@@ -43,11 +43,19 @@ class SyncPostfixCommand extends ConsoleCommand
             $changed = $this->writeAccessMap(self::BLACKLIST_MAP, $blacklist, 'REJECT') || $changed;
             $changed = $this->syncSenderRestrictions($whitelist !== [], $blacklist !== []) || $changed;
 
-            if (! $changed) {
+            if ($changed) {
+                $this->markPostfixReloadPending();
+            }
+
+            if (! $changed && ! $this->postfixReloadIsPending()) {
                 $this->info('The Postfix sender access configuration is already up to date.');
             } elseif ($this->option('no-reload')) {
                 $this->line('Skipping the Postfix reload (--no-reload).');
             } else {
+                if (! $changed) {
+                    $this->line('A previous run left a Postfix reload pending; reloading.');
+                }
+
                 $this->reloadPostfix();
             }
         } catch (RuntimeException $e) {
@@ -205,6 +213,8 @@ class SyncPostfixCommand extends ConsoleCommand
                 'Failed to reload Postfix: '.trim($reload->output().' '.$reload->errorOutput())
             );
         }
+
+        $this->clearPostfixReloadPending();
 
         $this->info('Postfix reloaded.');
     }

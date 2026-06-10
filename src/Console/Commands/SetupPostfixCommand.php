@@ -445,6 +445,10 @@ class SetupPostfixCommand extends ConsoleCommand
             );
         }
 
+        // The inner sync ran with --no-reload, leaving its reload pending;
+        // this reload activates that configuration too.
+        $this->clearPostfixReloadPending();
+
         $this->info('Postfix reloaded.');
     }
 

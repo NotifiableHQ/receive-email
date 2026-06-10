@@ -450,6 +450,10 @@ describe('postflight checks', function () {
         Process::assertRan('postfix check');
         Process::assertRan('postconf -x mydestination');
         Process::assertRan('systemctl reload postfix');
+
+        // The reload also activates the inner sync's --no-reload writes, so
+        // no reload-pending marker may remain.
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeFalse();
     });
 
     it('fails when the Postfix reload fails', function () {
@@ -463,5 +467,9 @@ describe('postflight checks', function () {
         $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
             ->expectsOutputToContain('Failed to reload Postfix')
             ->assertFailed();
+
+        // The inner sync's writes were never activated; the marker makes the
+        // next notifiable:sync-postfix run retry the reload.
+        expect(file_exists($this->postfixDir.'/notifiable_reload_pending'))->toBeTrue();
     });
 });

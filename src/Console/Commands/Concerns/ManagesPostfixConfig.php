@@ -3,6 +3,7 @@
 namespace Notifiable\ReceiveEmail\Console\Commands\Concerns;
 
 use Illuminate\Support\Facades\Process;
+use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 use RuntimeException;
 
 /**
@@ -13,6 +14,14 @@ use RuntimeException;
  */
 trait ManagesPostfixConfig
 {
+    /**
+     * Records that configuration has been written but not yet activated by a
+     * reload. Without it, a failed reload would strand the new
+     * configuration: the next sync run would find nothing left to change,
+     * report "already up to date", and never retry the reload.
+     */
+    private const RELOAD_PENDING_MARKER = 'notifiable_reload_pending';
+
     /**
      * Set a main.cf parameter via `postconf -e`, skipping the write when the
      * current value already matches. Returns whether the parameter changed.
@@ -67,5 +76,24 @@ trait ManagesPostfixConfig
         $this->line("Set master.cf service {$service} = {$definition}");
 
         return true;
+    }
+
+    private function markPostfixReloadPending(): void
+    {
+        $marker = PostfixDirectory::path(self::RELOAD_PENDING_MARKER);
+
+        if (@file_put_contents($marker, "Managed by notifiable:sync-postfix; deleted after a successful Postfix reload.\n") === false) {
+            throw new RuntimeException("Failed to write file: {$marker}");
+        }
+    }
+
+    private function postfixReloadIsPending(): bool
+    {
+        return file_exists(PostfixDirectory::path(self::RELOAD_PENDING_MARKER));
+    }
+
+    private function clearPostfixReloadPending(): void
+    {
+        @unlink(PostfixDirectory::path(self::RELOAD_PENDING_MARKER));
     }
 }

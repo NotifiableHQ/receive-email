@@ -166,6 +166,55 @@ it('skips the Postfix reload with --no-reload', function () {
     Process::assertDidntRun('systemctl reload postfix');
 });
 
+it('reloads on the next run after a failed reload instead of reporting already up to date', function () {
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    Process::fake([
+        'systemctl reload postfix' => Process::result(
+            errorOutput: 'Job for postfix.service failed because the control process exited with error code.',
+            exitCode: 1,
+        ),
+    ]);
+
+    // The maps and restrictions are written before the reload; the failed
+    // reload must not strand them as inactive-but-"up to date".
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('Failed to reload Postfix')
+        ->assertFailed();
+
+    Process::fake([
+        'systemctl reload postfix' => Process::result(),
+    ]);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('reload pending')
+        ->assertSuccessful();
+
+    Process::assertRanTimes('systemctl reload postfix', 2);
+
+    // The successful reload clears the pending state: the next run is a
+    // no-op again.
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('already up to date')
+        ->assertSuccessful();
+
+    Process::assertRanTimes('systemctl reload postfix', 2);
+});
+
+it('reloads on the next run after --no-reload wrote configuration', function () {
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    $this->artisan('notifiable:sync-postfix', ['--no-reload' => true])->assertSuccessful();
+
+    // Nothing is left to write, but the written configuration was never
+    // activated, so the reload-enabled run must reload.
+    $this->artisan('notifiable:sync-postfix')
+        ->doesntExpectOutputToContain('already up to date')
+        ->assertSuccessful();
+
+    Process::assertRanTimes('systemctl reload postfix', 1);
+});
+
 it('aborts when a list entry contains whitespace', function () {
     config()->set('receive_email.sender-domain-blacklist', ['bad domain.test']);
 
