@@ -12,7 +12,7 @@ This release hardens the package around its core invariant: the server accepts i
 - SPF verification is now configured by default during setup; the `--with-spf` flag is replaced by a `--without-spf` opt-out. On Ubuntu releases that no longer ship `postfix-policyd-spf-python`, setup falls back to `spf-engine`.
 - Pipe exit codes: filtered and malformed mail now exits `0` (Discard — `EmailRejected` is dispatched for filtered mail; no bounce is requested) instead of `EX_NOHOST`; transient failures exit `75` (`EX_TEMPFAIL`) so Postfix keeps the message queued. (ADR-0001)
 - Setup now requires root on Ubuntu 24.04+ (preflight check; `--force` skips the OS check) and refuses to configure the pipe to run as `root`. The pipe user defaults to `$SUDO_USER`, then the current user.
-- Queue lifetimes: `maximal_queue_lifetime = 5d` so tempfailed mail survives a multi-day incident; `bounce_queue_lifetime = 0` since bounces can never be delivered.
+- Queue lifetimes: `maximal_queue_lifetime = 5d` and `bounce_queue_lifetime = 5d` so tempfailed mail survives a multi-day incident. (`bounce_queue_lifetime` was briefly `0` during pre-release; Postfix applies it to *all* null-envelope-sender mail — including inbound DSNs accepted via the whitelist `<>` exemption — so `0` would have destroyed accepted mail after a single tempfail.)
 
 ### Added
 
@@ -33,3 +33,9 @@ This release hardens the package around its core invariant: the server accepts i
 - Mail-log importer durability: offsets are persisted atomically after every dispatched rejection (previously once per run, non-atomically), so a mid-run failure replays at most the single in-flight line. The documented guarantee is now at-least-once with a minimal duplicate window (pre-release review finding).
 - The mail-log importer now recognizes postscreen enforce-mode drops (PREGREET, HANGUP, DNSBL) and classifies postscreen connection-count rejects as rate limits; previously these were invisible (pre-release review finding).
 - First importer run on an existing server now fast-forwards to the end of the log instead of dispatching the entire history; `--from-beginning` opts into the backlog (pre-release review finding).
+- Postfix configuration is now edited via `postconf -e` / `postconf -M` instead of regex line editing, which corrupted multi-line continuation values and could leave a stale duplicate parameter effective (pre-release review finding).
+- A failed Postfix reload after `notifiable:sync-postfix` no longer strands the new configuration: a reload-pending marker makes the next run reload instead of reporting "already up to date" (pre-release review finding).
+- Setup now aborts with the apt output when `apt-get update` or `apt-get install` fails, instead of proceeding to mutate configuration (pre-release review finding).
+- Sender list validation now rejects `<>` and `#`-prefixed entries, which Postfix would treat as the null-sender key or as access-map comments — silently failing open or closed (pre-release review finding).
+- Sender rejections from `reject_non_fqdn_sender` / `reject_unknown_sender_domain` are no longer misclassified as `RejectionClass::EnvelopeList`; only access-map ("Access denied") rejections carry that class (pre-release review finding).
+- `notifiable:import-mail-log` implements `Isolatable`; overlapping runs (scheduler + manual) no longer double-dispatch rejections (pre-release review finding).
