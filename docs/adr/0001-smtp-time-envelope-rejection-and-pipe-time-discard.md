@@ -13,4 +13,4 @@ The package is receive-only (`default_transport = error`), so it can never deliv
 - The `sender-*-whitelist/blacklist` config keys change meaning from Header Sender to Envelope Sender; this must be called out loudly in docs/upgrade notes (the Stripe scenario above can change which mail is accepted).
 - A sync mechanism must regenerate and `postmap` the access maps when config lists change; the lists are static config, so DB-driven dynamic lists are out of scope for this layer.
 - Rejected mail never reaches Laravel, so `EmailRejected` only fires for pipe-time discards; SMTP-time rejections are surfaced to the application by the mail-log importer (see ADR-0002).
-- `--with-spf` becomes more important: SPF is what makes the Envelope Sender trustworthy enough to filter on.
+- SPF verification becomes more important — it is what makes the Envelope Sender trustworthy enough to filter on — so setup enables it by default, with `--without-spf` as the opt-out.

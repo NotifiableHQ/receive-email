@@ -55,6 +55,7 @@ class ReceiveEmailCommand extends Command
 
             return self::EX_OK;
         } catch (Throwable $exception) {
+            // Tempfail preserves mail: Postfix keeps it queued, so it delivers once the operator fixes the failing condition.
             Log::error('Failed to receive email. Exiting EX_TEMPFAIL so Postfix keeps the message queued.', ['exception' => $exception]);
 
             return self::EX_TEMPFAIL;

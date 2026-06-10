@@ -251,7 +251,10 @@ The server is receive-only: it never sends, relays, or bounces mail. Mail refuse
 |---------|-----------|-------------|
 | A pipe-time filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. |
 | The message is malformed (e.g. missing required headers) | `0` | Discarded with a log entry. Retries cannot fix a broken message, and bouncing is impossible on a receive-only server. |
+| The pipe is misconfigured (e.g. `pipe-filter` or `pipe-command` is not a valid class), or the input exceeds `message-size-limit` | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later. |
 | An unexpected failure occurs (database down, disk full, ...) | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later, so transient outages never destroy accepted mail. |
+
+Exiting `EX_TEMPFAIL` for misconfiguration and oversize input is deliberate, even though those conditions look permanent: tempfail is the mail-preserving choice. Both are operator-fixable — correct the config (or reconcile `message-size-limit` with Postfix's `message_size_limit`, which normally stops oversize mail at SMTP time) and everything that queued up in the meantime delivers successfully. Any other exit would either discard real mail or ask for a bounce this server can never send.
 
 ## Upgrading to v1
 

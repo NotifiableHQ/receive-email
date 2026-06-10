@@ -21,7 +21,7 @@ A PHP filter (`EmailFilterContract`) that runs after a message has been accepted
 _Avoid_: email filter (unqualified)
 
 **Discard**:
-Accepting a message at SMTP and then dropping it without ever generating a bounce, while dispatching `EmailRejected` so the application retains visibility. The only permissible fate for mail rejected after acceptance.
+Accepting a message at SMTP and then dropping it without ever generating a bounce — dispatching `EmailRejected` so the application retains visibility, except for malformed mail, which cannot yield an event payload and is only logged. The only permissible fate for mail rejected after acceptance.
 _Avoid_: reject (for post-acceptance mail), bounce
 
 **Receive-only**:
