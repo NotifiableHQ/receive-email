@@ -1,0 +1,12 @@
+Jun  9 12:00:01 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]
+Jun  9 12:00:02 mail postfix/smtpd[31001]: 4F8C2A0012: client=mail.example.org[198.51.100.10]
+Jun  9 12:00:02 mail postfix/cleanup[31002]: 4F8C2A0012: message-id=<ok-1@example.org>
+Jun  9 12:00:03 mail postfix/pipe[31003]: 4F8C2A0012: to=<inbox@receiver.test>, relay=receive-email, delays=0.1/0/0/0.2, dsn=2.0.0, status=sent (delivered via receive-email service)
+Jun  9 12:00:03 mail postfix/smtpd[31001]: disconnect from mail.example.org[198.51.100.10]
+Jun  9 12:01:10 mail postfix/smtpd[31010]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <spammer@blocked.example>: Sender address rejected: Access denied; from=<spammer@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>
+Jun  9 12:02:20 mail postfix/smtpd[31011]: NOQUEUE: reject: RCPT from mail.forged.example[198.51.100.7]: 550 5.7.23 <inbox@receiver.test>: Recipient address rejected: Message rejected due to: SPF fail - not authorized; from=<forged@bank.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.forged.example>
+Jun  9 12:03:30 mail postfix/smtpd[31012]: NOQUEUE: reject: RCPT from unknown[192.0.2.9]: 504 5.5.2 <localhost>: Helo command rejected: need fully-qualified hostname; from=<someone@somewhere.example> to=<inbox@receiver.test> proto=SMTP helo=<localhost>
+Jun  9 12:04:40 mail postfix/smtpd[31013]: warning: Connection rate limit exceeded: 42 from flood.example[203.0.113.77] for service smtp
+Jun  9 12:05:50 mail postfix/postscreen[31014]: NOQUEUE: reject: RCPT from [203.0.113.99]:54321: 550 5.7.1 Service unavailable; client [203.0.113.99] blocked using zen.spamhaus.org; from=<bot@botnet.example>, to=<inbox@receiver.test>, proto=ESMTP, helo=<bot.example>
+Jun  9 12:06:55 mail postfix/smtpd[31015]: NOQUEUE: reject: malformed beyond recognition
+2026-06-09T12:07:30.123456+00:00 mail postfix/smtpd[31016]: NOQUEUE: reject: RCPT from unknown[198.51.100.33]: 554 5.7.1 <crawler@blocked.example>: Sender address rejected: Access denied; from=<crawler@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<crawler.example>

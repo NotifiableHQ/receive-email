@@ -46,6 +46,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Mail Log Path
+    |--------------------------------------------------------------------------
+    |
+    | The Postfix mail log read by the notifiable:import-mail-log command
+    | to observe SMTP-time rejections. The app user needs read access
+    | (on Ubuntu, membership in the adm group).
+    |
+    */
+
+    'mail-log-path' => '/var/log/mail.log',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mail Log Offset Path
+    |--------------------------------------------------------------------------
+    |
+    | Where the importer persists its read position between runs so each
+    | rejection is observed exactly once.
+    |
+    */
+
+    'mail-log-offset-path' => storage_path('app/receive_email/mail-log-offset.json'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Email Model Table
     |--------------------------------------------------------------------------
     |

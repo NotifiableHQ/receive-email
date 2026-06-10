@@ -1,0 +1,3 @@
+Jun 10 04:00:01 mail postfix/smtpd[40001]: connect from mail.example.org[198.51.100.10]
+Jun 10 04:00:05 mail postfix/smtpd[40002]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <spammer@blocked.example>: Sender address rejected: Access denied; from=<spammer@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>
+Jun 10 04:00:06 mail postfix/smtpd[40001]: disconnect from mail.example.org[198.51.100.10]
