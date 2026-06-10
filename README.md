@@ -132,6 +132,16 @@ After publishing the config file, you can tune the following settings in `config
 
 To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup command.
 
+## Rejected and Failed Mail
+
+The server is receive-only: it never sends, relays, or bounces mail. Once Postfix has accepted a message and piped it into your app, the pipe command resolves it in one of three ways:
+
+| Outcome | Exit code | Disposition |
+|---------|-----------|-------------|
+| A pipe-time filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. |
+| The message is malformed (e.g. missing required headers) | `0` | Discarded with a log entry. Retries cannot fix a broken message, and bouncing is impossible on a receive-only server. |
+| An unexpected failure occurs (database down, disk full, ...) | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later, so transient outages never destroy accepted mail. |
+
 ## Research References
 - [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)
 - [Installing and configuring Postfix on Ubuntu](https://ubuntu.com/server/docs/install-and-configure-postfix)
