@@ -16,6 +16,84 @@ function smtpdRejectLine(string $sender, string $time = '13:00:01'): string
     return "Jun  9 {$time} mail postfix/smtpd[31020]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <{$sender}>: Sender address rejected: Access denied; from=<{$sender}> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>";
 }
 
+/**
+ * Stream wrapper that proxies a real log file and appends to it the moment
+ * fstat() captures the size anchor — simulating a rejection logged while the
+ * first-run fast-forward scan is still reading toward a moving EOF.
+ */
+class GrowingMailLogStream
+{
+    /** @var resource|null */
+    public $context;
+
+    public static string $target = '';
+
+    public static string $appendOnStat = '';
+
+    /** @var resource */
+    private $handle;
+
+    public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
+    {
+        $handle = fopen(self::$target, $mode);
+
+        if ($handle === false) {
+            return false;
+        }
+
+        $this->handle = $handle;
+
+        return true;
+    }
+
+    public function stream_read(int $count): string|false
+    {
+        return fread($this->handle, $count);
+    }
+
+    public function stream_eof(): bool
+    {
+        return feof($this->handle);
+    }
+
+    public function stream_seek(int $offset, int $whence = SEEK_SET): bool
+    {
+        return fseek($this->handle, $offset, $whence) === 0;
+    }
+
+    public function stream_tell(): int
+    {
+        return (int) ftell($this->handle);
+    }
+
+    public function stream_close(): void
+    {
+        fclose($this->handle);
+    }
+
+    /** @return array<int|string, int>|false */
+    public function stream_stat(): array|false
+    {
+        $stat = fstat($this->handle);
+
+        if (self::$appendOnStat !== '') {
+            file_put_contents(self::$target, self::$appendOnStat, FILE_APPEND);
+
+            self::$appendOnStat = '';
+        }
+
+        return $stat;
+    }
+
+    /** @return array<int|string, int>|false */
+    public function url_stat(string $path, int $flags): array|false
+    {
+        $stat = @stat(self::$target);
+
+        return $stat === false ? false : $stat;
+    }
+}
+
 beforeEach(function () {
     $this->logPath = (string) tempnam(sys_get_temp_dir(), 'maillog-');
     $this->offsetDirectory = sys_get_temp_dir().'/maillog-offset-'.uniqid();
@@ -83,9 +161,15 @@ it('parses fixture rejections into SmtpRejectionObserved events', function () {
 
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->rejectionClass === RejectionClass::RateLimit
-            && $event->rejection->clientIp === '203.0.113.77'
-            && $event->rejection->envelopeSender === null
-            && $event->rejection->recipient === null;
+            && $event->rejection->clientIp === '203.0.113.70'
+            && $event->rejection->envelopeSender === 'bulk@fast.example';
+    });
+
+    // The smtpd connection-rate warning is a throttling notice, not a
+    // per-message rejection; it must not produce an event.
+    Event::assertNotDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->clientIp === '203.0.113.77'
+            || str_contains($event->rejection->rawLine, 'Connection rate limit exceeded');
     });
 
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
@@ -170,6 +254,44 @@ it('stops the first-run offset before a partially written final line', function 
     Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
     Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
         return $event->rejection->envelopeSender === 'partial@blocked.example';
+    });
+});
+
+it('dispatches rejections appended during the first-run fast-forward on the next run', function () {
+    Event::fake();
+
+    file_put_contents(
+        $this->logPath,
+        "Jun  9 12:00:01 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]\n"
+    );
+
+    // The wrapper appends a rejection right after the command captures its
+    // size anchor from the opened handle, so the line is visible to the
+    // scan's moving EOF but lies beyond the anchor.
+    GrowingMailLogStream::$target = $this->logPath;
+    GrowingMailLogStream::$appendOnStat = smtpdRejectLine('mid-scan@blocked.example')."\n";
+
+    stream_wrapper_register('growlog', GrowingMailLogStream::class);
+
+    try {
+        config()->set('receive_email.mail-log-path', 'growlog://mail.log');
+
+        $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    } finally {
+        stream_wrapper_unregister('growlog');
+    }
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
+
+    config()->set('receive_email.mail-log-path', $this->logPath);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'mid-scan@blocked.example';
     });
 });
 
