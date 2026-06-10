@@ -38,16 +38,19 @@ class RejectionLineParser
 
     private const POSTSCREEN_DNSBL_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sDNSBL\srank\s\d+\sfor\s\[(?<ip>[^\]]+)\]:\d+$/';
 
-    private const RATE_LIMIT_WARNING_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/smtpd\[\d+\]:\swarning:\sConnection\s(?:rate|concurrency)\slimit\sexceeded:\s\d+\sfrom\s(?<host>[^\[]+)\[(?<ip>[^\]]+)\]/';
-
     /**
      * Whether the line claims to be a rejection. A line that does but fails
      * parse() is counted as unparseable; anything else is ordinary log noise.
+     *
+     * Only definitive rejection events qualify: NOQUEUE rejects and
+     * postscreen enforce drops. Throttling notices like smtpd's
+     * "warning: Connection rate limit exceeded" describe no per-message
+     * rejection (the rejection, if any, logs its own NOQUEUE line) and are
+     * deliberately ordinary noise.
      */
     public function isRejectionLine(string $line): bool
     {
         return str_contains($line, 'NOQUEUE: reject:')
-            || (str_contains($line, 'warning: Connection') && str_contains($line, 'limit exceeded'))
             || $this->isPostscreenDropLine($line);
     }
 
@@ -69,10 +72,6 @@ class RejectionLineParser
             || preg_match(self::POSTSCREEN_HANGUP_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1
             || preg_match(self::POSTSCREEN_DNSBL_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
             return $this->makeRejection($line, $matches, RejectionClass::Postscreen);
-        }
-
-        if (preg_match(self::RATE_LIMIT_WARNING_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
-            return $this->makeRejection($line, $matches, RejectionClass::RateLimit);
         }
 
         return null;

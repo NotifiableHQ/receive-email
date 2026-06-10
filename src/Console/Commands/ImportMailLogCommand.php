@@ -37,12 +37,6 @@ class ImportMailLogCommand extends Command implements Isolatable
             return self::FAILURE;
         }
 
-        $inode = fileinode($logPath);
-        $inode = $inode === false ? null : $inode;
-
-        $size = filesize($logPath);
-        $size = $size === false ? 0 : $size;
-
         $store = new MailLogOffsetStore(Config::string('receive_email.mail-log-offset-path'));
 
         $position = $store->get();
@@ -52,8 +46,6 @@ class ImportMailLogCommand extends Command implements Isolatable
         // logged from now on, unless the user opts into the backlog.
         $fastForward = $position === null && ! $this->option('from-beginning');
 
-        $offset = $this->resumeOffset($position, $inode, $size);
-
         $handle = fopen($logPath, 'r');
 
         if ($handle === false) {
@@ -61,6 +53,24 @@ class ImportMailLogCommand extends Command implements Isolatable
 
             return self::FAILURE;
         }
+
+        // Stat the opened handle, not the path: the path can be rotated away
+        // between a stat and the open, and the size at open is the anchor
+        // the first-run fast-forward stops at — EOF moves while we read.
+        $stat = fstat($handle);
+
+        if ($stat === false) {
+            fclose($handle);
+
+            $this->error("Could not stat mail log [{$logPath}].");
+
+            return self::FAILURE;
+        }
+
+        $inode = $stat['ino'];
+        $size = $stat['size'];
+
+        $offset = $this->resumeOffset($position, $inode, $size);
 
         $observed = 0;
         $unparseable = 0;
@@ -80,6 +90,13 @@ class ImportMailLogCommand extends Command implements Isolatable
                 $offset += strlen($line);
 
                 if ($fastForward) {
+                    // Stop at the size captured at open; lines appended while
+                    // this scan runs belong to the next run, which dispatches
+                    // them instead of silently consuming them.
+                    if ($offset >= $size) {
+                        break;
+                    }
+
                     continue;
                 }
 

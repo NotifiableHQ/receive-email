@@ -95,17 +95,16 @@ it('classifies in-session rate-limit rejections', function () {
     expect($rejection->rejectionClass)->toBe(RejectionClass::RateLimit);
 });
 
-it('parses connection rate limit warnings without envelope data', function () {
-    $line = 'Jun  9 12:04:40 mail postfix/smtpd[31013]: warning: Connection rate limit exceeded: 42 from flood.example[203.0.113.77] for service smtp';
+it('does not treat connection limit warnings as rejections', function () {
+    $lines = [
+        'Jun  9 12:04:40 mail postfix/smtpd[31013]: warning: Connection rate limit exceeded: 42 from flood.example[203.0.113.77] for service smtp',
+        'Jun  9 12:04:41 mail postfix/smtpd[31013]: warning: Connection concurrency limit exceeded: 11 from flood.example[203.0.113.77] for service smtp',
+    ];
 
-    $rejection = $this->parser->parse($line);
-
-    expect($rejection)->not->toBeNull()
-        ->and($rejection->rejectionClass)->toBe(RejectionClass::RateLimit)
-        ->and($rejection->clientHost)->toBe('flood.example')
-        ->and($rejection->clientIp)->toBe('203.0.113.77')
-        ->and($rejection->envelopeSender)->toBeNull()
-        ->and($rejection->recipient)->toBeNull();
+    foreach ($lines as $line) {
+        expect($this->parser->isRejectionLine($line))->toBeFalse()
+            ->and($this->parser->parse($line))->toBeNull();
+    }
 });
 
 it('parses postscreen rejections', function () {
