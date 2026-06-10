@@ -3,19 +3,17 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Process;
+use Notifiable\ReceiveEmail\Console\Commands\Concerns\EditsPostfixConfig;
+use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 
 class SetupPostfixCommand extends ConsoleCommand
 {
-    public const POSTFIX_DIR = '/etc/postfix';
+    use EditsPostfixConfig;
 
-    /**
-     * The Postfix configuration directory. Overridable in tests.
-     */
-    public static string $postfixDirectory = self::POSTFIX_DIR;
+    public const POSTFIX_DIR = PostfixDirectory::DEFAULT;
 
     /**
      * The os-release file consulted by the operating system preflight check.
@@ -75,6 +73,7 @@ class SetupPostfixCommand extends ConsoleCommand
 
             $this->info("\nFor DKIM/DMARC verification, consider rspamd.");
 
+            $this->syncSenderAccessMaps();
             $this->verifyPostfixConfiguration($domain);
             $this->reloadPostfix();
         } catch (RuntimeException $e) {
@@ -138,8 +137,8 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->upsertLine($mainConfig, 'smtpd_helo_required = yes');
         $this->upsertLine($mainConfig, 'smtpd_helo_restrictions = reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
 
-        // Sender restrictions
-        $this->upsertLine($mainConfig, 'smtpd_sender_restrictions = reject_non_fqdn_sender, reject_unknown_sender_domain');
+        // smtpd_sender_restrictions is owned by notifiable:sync-postfix,
+        // invoked at the end of setup.
 
         // Disable VRFY
         $this->upsertLine($mainConfig, 'disable_vrfy_command = yes');
@@ -298,7 +297,7 @@ class SetupPostfixCommand extends ConsoleCommand
 
         if ($effectiveUserId !== 0) {
             throw new RuntimeException(
-                'This command must be run as root: it installs packages and edits '.static::$postfixDirectory.'. '
+                'This command must be run as root: it installs packages and edits '.PostfixDirectory::$path.'. '
                 .'Re-run as `sudo php artisan notifiable:setup-postfix`.'
             );
         }
@@ -430,74 +429,26 @@ class SetupPostfixCommand extends ConsoleCommand
             : get_current_user();
     }
 
+    /**
+     * The built-in sender lists are enforced as SMTP-time Envelope Sender
+     * access maps; notifiable:sync-postfix owns those maps and the
+     * smtpd_sender_restrictions line, and deploy hooks re-run it when the
+     * lists change. Setup invokes it once and reloads Postfix itself after
+     * the postflight checks.
+     */
+    private function syncSenderAccessMaps(): void
+    {
+        $this->info("\nSyncing the Envelope Sender access maps\n");
+
+        if ($this->call(SyncPostfixCommand::class, ['--no-reload' => true]) !== Command::SUCCESS) {
+            throw new RuntimeException('Failed to sync the Envelope Sender access maps.');
+        }
+    }
+
     private function reloadPostfix(): void
     {
         $this->info("\nReloading postfix\n");
         $this->line(Process::run('systemctl reload postfix')->output());
-    }
-
-    private function getConfigPath(string $config): string
-    {
-        $path = static::$postfixDirectory.'/'.$config;
-
-        if (! file_exists($path)) {
-            throw new RuntimeException("The {$path} file does not exist!");
-        }
-
-        return $path;
-    }
-
-    private function editLine(string $filePath, string $regex, string $newLine): ?string
-    {
-        $content = file_get_contents($filePath);
-
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$filePath}");
-        }
-
-        $matches = [];
-        if (! preg_match($regex, $content, $matches)) {
-            return null;
-        }
-
-        /** @var string $originalLine */
-        $originalLine = Arr::first($matches);
-
-        if (@file_put_contents($filePath, str_replace($originalLine, $newLine, $content)) === false) {
-            throw new RuntimeException("Failed to write file: {$filePath}");
-        }
-
-        $this->line("--- Editing {$filePath} ---");
-        $this->line("From: {$originalLine}");
-        $this->line("To:  {$newLine}");
-
-        return $originalLine;
-    }
-
-    private function upsertOrEditLine(string $filePath, string $regex, string $newLine): void
-    {
-        if ($this->editLine($filePath, $regex, $newLine) === null) {
-            $this->upsertLine($filePath, $newLine);
-        }
-    }
-
-    private function upsertLine(string $filePath, string $line): void
-    {
-        $content = file_get_contents($filePath);
-
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$filePath}");
-        }
-
-        if (str($content)->contains($line)) {
-            return;
-        }
-
-        if (@file_put_contents($filePath, "\n$line\n", FILE_APPEND) === false) {
-            throw new RuntimeException("Failed to write file: {$filePath}");
-        }
-
-        $this->line("Append to {$filePath} : {$line}");
     }
 
     private function getReceiveEmailCommand(): string

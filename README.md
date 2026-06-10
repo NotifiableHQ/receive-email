@@ -129,6 +129,18 @@ After publishing the config file, you can tune the following settings in `config
 
 To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup command.
 
+### Envelope Sender filtering
+
+The `sender-domain-whitelist`, `sender-domain-blacklist`, `sender-address-whitelist`, and `sender-address-blacklist` config lists are enforced at SMTP time as Postfix access maps keyed on the Envelope Sender — the SMTP `MAIL FROM` address, the identity SPF verifies. The setup command syncs them once; whenever the lists change, re-sync them (e.g. from a deploy hook):
+
+```bash
+sudo php artisan notifiable:sync-postfix
+```
+
+When any whitelist has entries, the server rejects every sender not present in a whitelist. With only blacklists, listed senders are rejected and everyone else is accepted. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code.
+
+> **Upgrade note:** these lists previously matched the Header Sender (the `Sender:`/`From:` header) in PHP after the mail was accepted. They now match the Envelope Sender before acceptance, and the built-in filter classes are no longer evaluated pipe-time (custom `EmailFilterContract` filters still run). Where the two identities diverge — common for ESP-sent mail, e.g. header `From: alerts@stripe.com` with envelope sender `bounces@em5678.stripe.com` — the lists now apply to the envelope side, so whitelist the envelope domain (`em5678.stripe.com`), not the header domain.
+
 ## Research References
 - [How Postfix receives email](https://www.postfix.org/OVERVIEW.html#receiving)
 - [Installing and configuring Postfix on Ubuntu](https://ubuntu.com/server/docs/install-and-configure-postfix)

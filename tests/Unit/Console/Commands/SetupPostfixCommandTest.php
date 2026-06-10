@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Process;
 use Notifiable\ReceiveEmail\Console\Commands\SetupPostfixCommand;
+use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 
 function currentSystemUser(): string
 {
@@ -18,7 +19,7 @@ beforeEach(function () {
     file_put_contents($this->postfixDir.'/master.cf', "smtp      inet  n       -       y       -       -       smtpd\n");
     file_put_contents($this->postfixDir.'/os-release', "ID=ubuntu\nVERSION_ID=\"24.04\"\n");
 
-    SetupPostfixCommand::$postfixDirectory = $this->postfixDir;
+    PostfixDirectory::$path = $this->postfixDir;
     SetupPostfixCommand::$osReleasePath = $this->postfixDir.'/os-release';
     SetupPostfixCommand::$effectiveUserId = 0;
 
@@ -35,7 +36,7 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    SetupPostfixCommand::$postfixDirectory = SetupPostfixCommand::POSTFIX_DIR;
+    PostfixDirectory::$path = PostfixDirectory::DEFAULT;
     SetupPostfixCommand::$osReleasePath = '/etc/os-release';
     SetupPostfixCommand::$effectiveUserId = null;
 
@@ -45,6 +46,8 @@ afterEach(function () {
     @unlink($this->postfixDir.'/main.cf');
     @unlink($this->postfixDir.'/master.cf');
     @unlink($this->postfixDir.'/os-release');
+    @unlink($this->postfixDir.'/notifiable_sender_whitelist');
+    @unlink($this->postfixDir.'/notifiable_sender_blacklist');
     @rmdir($this->postfixDir);
 });
 
@@ -381,6 +384,28 @@ describe('SPF verification', function () {
         expect(substr_count($mainConfig, 'policy-spf_time_limit ='))->toBe(1);
         expect(substr_count($mainConfig, 'check_policy_service'))->toBe(1);
         expect(preg_match_all('/^policy-spf\s+unix/m', $masterConfig))->toBe(1);
+    });
+});
+
+describe('sender access map sync', function () {
+    it('syncs the Envelope Sender access maps once during setup', function () {
+        config()->set('receive_email.sender-address-blacklist', ['spammer@bad.test']);
+
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))
+            ->toContain("spammer@bad.test\tREJECT");
+        expect(file_get_contents($this->postfixDir.'/main.cf'))->toContain(
+            'smtpd_sender_restrictions = check_sender_access hash:'.$this->postfixDir.'/notifiable_sender_blacklist, '
+            .'reject_non_fqdn_sender, reject_unknown_sender_domain'
+        );
+
+        Process::assertRan('postmap hash:'.$this->postfixDir.'/notifiable_sender_blacklist');
+
+        // Setup reloads Postfix itself after the postflight checks; the
+        // inner sync must not reload a not-yet-verified configuration.
+        Process::assertRanTimes('systemctl reload postfix', 1);
     });
 });
 

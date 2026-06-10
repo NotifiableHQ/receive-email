@@ -8,6 +8,10 @@ use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderDomainWhitelistFilter;
 
 beforeEach(function () {
     Event::fake();
@@ -127,6 +131,61 @@ it('stops at the first failing filter', function () {
     Event::assertDispatched(EmailRejected::class, 1);
     Event::assertDispatched(function (EmailRejected $event) use ($failingClass) {
         return $event->filterClass === $failingClass;
+    });
+});
+
+it('skips the built-in list filters in the pipe', function () {
+    Config::set('receive_email.email-filters', [
+        SenderDomainWhitelistFilter::class,
+        SenderDomainBlacklistFilter::class,
+        SenderAddressWhitelistFilter::class,
+        SenderAddressBlacklistFilter::class,
+    ]);
+
+    // Every built-in filter would reject this sender if it were evaluated:
+    // the address is blacklisted and no whitelist matches it.
+    Config::set('receive_email.sender-address-blacklist', ['blocked@example.com']);
+    Config::set('receive_email.sender-domain-blacklist', ['example.com']);
+    Config::set('receive_email.sender-address-whitelist', ['other@trusted.test']);
+    Config::set('receive_email.sender-domain-whitelist', ['trusted.test']);
+
+    $fakeMail = ParsedMail::fake([
+        'sender' => ['address' => 'blocked@example.com', 'display' => 'Blocked Sender'],
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeTrue();
+    Event::assertNotDispatched(EmailRejected::class);
+});
+
+it('still runs custom filters when built-in filters are also configured', function () {
+    $customFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $customClass = get_class($customFilter);
+    app()->instance($customClass, $customFilter);
+
+    Config::set('receive_email.email-filters', [
+        SenderAddressBlacklistFilter::class,
+        $customClass,
+    ]);
+
+    $fakeMail = ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse();
+    Event::assertDispatched(function (EmailRejected $event) use ($customClass) {
+        return $event->filterClass === $customClass;
     });
 });
 

@@ -95,68 +95,36 @@ return [
     | Email Filters
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the email filters that should be applied to incoming
-    | emails. These filters will be applied in the order that they are listed
-    | in this array. You may use the default filters or create your own.
+    | Here you may specify custom Pipe-time Filters that should be applied to
+    | incoming emails after acceptance, in the order they are listed. Each
+    | class must implement EmailFilterContract. The built-in sender list
+    | filters are enforced at SMTP time (see the lists below) and are not
+    | evaluated here.
     |
     */
 
-    'email-filters' => [
-        // \Notifiable\ReceiveEmail\Filters\SenderDomainWhitelistFilter::class,
-        // \Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter::class,
-        // \Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter::class,
-        // \Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter::class,
-    ],
+    'email-filters' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | Sender Domain Whitelist
+    | Sender Lists (Envelope Sender)
     |--------------------------------------------------------------------------
     |
-    | Here you may specify a list of domains that the mail server will allow
-    | receiving emails from. If the sender's domain is in the list,
-    | the email will be accepted.
+    | These lists match the Envelope Sender — the SMTP `MAIL FROM` address,
+    | the identity SPF verifies — and are compiled into Postfix access maps
+    | by `php artisan notifiable:sync-postfix`, rejecting mail during the
+    | SMTP transaction. When any whitelist has entries, senders not present
+    | in a whitelist are rejected; with only blacklists, listed senders are
+    | rejected and everyone else is accepted. Re-run the sync command (e.g.
+    | from a deploy hook) whenever these lists change.
     |
     */
 
     'sender-domain-whitelist' => [],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Sender Domain Blacklist
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify a list of domains that the mail server will not
-    | allow receiving emails from. If the sender's domain is in
-    | the list, the email will be rejected.
-    |
-    */
-
     'sender-domain-blacklist' => [],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Sender Address Whitelist
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify a list of email addresses that the mail server will
-    | allow receiving emails from. If the sender's email address is in
-    | the list, the email will be accepted.
-    |
-    */
-
     'sender-address-whitelist' => [],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Sender Address Blacklist
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify a list of email addresses that the mail server will
-    | not allow receiving emails from. If the sender's email address is
-    | in the list, the email will be rejected.
-    |
-    */
 
     'sender-address-blacklist' => [],
 
