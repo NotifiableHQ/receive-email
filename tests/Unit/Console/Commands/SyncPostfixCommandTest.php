@@ -223,6 +223,50 @@ it('aborts when a list entry contains whitespace', function () {
         ->assertFailed();
 });
 
+it('aborts when a list entry is the null sender token', function () {
+    // A blacklisted `<>` would reject the remote bounces and DSNs that the
+    // whitelist exemption guarantees deliverable (RFC 5321 §4.5.5).
+    config()->set('receive_email.sender-address-blacklist', ['<>']);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain("Invalid sender-address-blacklist entry: '<>'. The null Envelope Sender cannot be listed")
+        ->assertFailed();
+
+    Process::assertNothingRan();
+});
+
+it('aborts when a whitelist entry is the null sender token', function () {
+    config()->set('receive_email.sender-address-whitelist', ['<>']);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('Invalid sender-address-whitelist entry')
+        ->assertFailed();
+
+    Process::assertNothingRan();
+});
+
+it('aborts when a list entry starts with a comment character', function () {
+    // postmap treats #-prefixed lines as comments: the entry would silently
+    // fail open on a blacklist and fail closed on a whitelist.
+    config()->set('receive_email.sender-domain-blacklist', ['#bad.test']);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('access-map comments that Postfix silently ignores')
+        ->assertFailed();
+
+    Process::assertNothingRan();
+});
+
+it('aborts when a whitelist entry starts with a comment character', function () {
+    config()->set('receive_email.sender-domain-whitelist', ['#trusted.test']);
+
+    $this->artisan('notifiable:sync-postfix')
+        ->expectsOutputToContain('Invalid sender-domain-whitelist entry')
+        ->assertFailed();
+
+    Process::assertNothingRan();
+});
+
 it('aborts when postmap fails', function () {
     Process::fake([
         'postmap *' => Process::result(errorOutput: 'postmap: fatal: bad string length', exitCode: 1),

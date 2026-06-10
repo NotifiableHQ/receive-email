@@ -85,6 +85,27 @@ class SyncPostfixCommand extends ConsoleCommand
                     );
                 }
 
+                // `<>` is Postfix's lookup key for the null Envelope Sender.
+                // Listing it would override the automatic whitelist
+                // exemption or, on a blacklist, reject the remote bounces
+                // and DSNs that RFC 5321 requires stay deliverable.
+                if ($entry === '<>') {
+                    throw new RuntimeException(
+                        "Invalid {$key} entry: '<>'. The null Envelope Sender cannot be listed: "
+                        .'RFC 5321 requires it to stay deliverable, and the whitelist already exempts it automatically.'
+                    );
+                }
+
+                // postmap treats #-prefixed lines as comments, so such an
+                // entry would silently fail open on a blacklist and fail
+                // closed on a whitelist.
+                if (str_starts_with($entry, '#')) {
+                    throw new RuntimeException(
+                        "Invalid {$key} entry: ".var_export($entry, true)
+                        .". Entries starting with '#' are access-map comments that Postfix silently ignores."
+                    );
+                }
+
                 $entries[] = mb_strtolower($entry);
             }
         }
