@@ -153,6 +153,9 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->upsertLine($mainConfig, 'smtpd_soft_error_limit = 5');
         $this->upsertLine($mainConfig, 'smtpd_hard_error_limit = 10');
 
+        // postscreen: drop clients that talk before the SMTP greeting
+        $this->upsertOrEditLine($mainConfig, '/^postscreen_greet_action = (.*)$/m', 'postscreen_greet_action = enforce');
+
         // Data restrictions
         $this->upsertLine($mainConfig, 'smtpd_data_restrictions = reject_unauth_pipelining');
 
@@ -212,12 +215,22 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $masterConfig = $this->getConfigPath('master.cf');
 
-        $newSmtpDaemon = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
+        // postscreen topology: postscreen owns port 25 and drops botnet
+        // zombies before they consume an smtpd process; legitimate clients
+        // are handed to smtpd as a pass-through service, where the
+        // content_filter keeps piping accepted mail into the notifiable
+        // transport. tlsproxy keeps inbound STARTTLS working behind
+        // postscreen; dnsblog is its DNS lookup helper.
+        $newSmtpDaemon = 'smtp inet n - - - 1 postscreen';
         $oldSmtpDaemon = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newSmtpDaemon);
 
         if ($oldSmtpDaemon === null) {
             throw new RuntimeException("'smtp inet' is missing from {$masterConfig}.");
         }
+
+        $this->upsertOrEditLine($masterConfig, '/^smtpd(\s+)pass(.*)$/m', 'smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy');
+        $this->upsertOrEditLine($masterConfig, '/^dnsblog(\s+)unix(.*)$/m', 'dnsblog unix - - - - 0 dnsblog');
+        $this->upsertOrEditLine($masterConfig, '/^tlsproxy(\s+)unix(.*)$/m', 'tlsproxy unix - - - - 0 tlsproxy');
 
         $command = $this->getReceiveEmailCommand();
         $concurrency = config('receive_email.pipe-concurrency', 4);

@@ -257,6 +257,44 @@ describe('postfix config values', function () {
     });
 });
 
+describe('postscreen topology', function () {
+    it('puts postscreen on port 25 with smtpd as a pass-through service', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
+
+        expect($masterConfig)
+            ->toContain('smtp inet n - - - 1 postscreen')
+            ->toContain('smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy')
+            ->toContain('dnsblog unix - - - - 0 dnsblog')
+            ->toContain('tlsproxy unix - - - - 0 tlsproxy')
+            ->toContain('user=deploy argv=');
+
+        expect(file_get_contents($this->postfixDir.'/main.cf'))
+            ->toContain('postscreen_greet_action = enforce');
+    });
+
+    it('keeps the master.cf service entries single across re-runs', function () {
+        $arguments = ['domain' => 'example.com', '--user' => 'deploy'];
+
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+
+        $masterConfig = (string) file_get_contents($this->postfixDir.'/master.cf');
+
+        expect(preg_match_all('/^smtp\s+inet/m', $masterConfig))->toBe(1);
+        expect(preg_match_all('/^smtpd\s+pass/m', $masterConfig))->toBe(1);
+        expect(preg_match_all('/^dnsblog\s+unix/m', $masterConfig))->toBe(1);
+        expect(preg_match_all('/^tlsproxy\s+unix/m', $masterConfig))->toBe(1);
+        expect(preg_match_all('/^notifiable\s+unix/m', $masterConfig))->toBe(1);
+
+        $mainConfig = (string) file_get_contents($this->postfixDir.'/main.cf');
+
+        expect(substr_count($mainConfig, 'postscreen_greet_action ='))->toBe(1);
+    });
+});
+
 describe('postflight checks', function () {
     it('aborts before reloading Postfix when postfix check fails', function () {
         Process::fake([
