@@ -1,7 +1,9 @@
 <?php
 
+use Illuminate\Events\Dispatcher;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\ApplyFilters;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
@@ -187,6 +189,68 @@ it('still runs custom filters when built-in filters are also configured', functi
     Event::assertDispatched(function (EmailRejected $event) use ($customClass) {
         return $event->filterClass === $customClass;
     });
+});
+
+it('still rejects and logs when an EmailRejected listener throws', function () {
+    // Replace the fake from beforeEach with a real dispatcher so the
+    // throwing listener actually runs.
+    Event::swap(new Dispatcher(app()));
+    Log::spy();
+
+    $dispatched = 0;
+    Event::listen(EmailRejected::class, function () use (&$dispatched) {
+        $dispatched++;
+
+        throw new RuntimeException('Listener failure.');
+    });
+
+    // Create a mock filter that fails
+    $failingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($failingFilter);
+    app()->instance($filterClass, $failingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    $fakeMail = ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse()
+        ->and($dispatched)->toBe(1);
+    Log::shouldHaveReceived('error')->once();
+});
+
+it('lets filter execution errors escape unswallowed', function () {
+    // Create a mock filter that fails like a transient outage would
+    $throwingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            throw new RuntimeException('Database is down.');
+        }
+    };
+
+    $filterClass = get_class($throwingFilter);
+    app()->instance($filterClass, $throwingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect(fn () => $applyFilters->handle(ParsedMail::getFacadeRoot()))
+        ->toThrow(RuntimeException::class);
+    Event::assertNotDispatched(EmailRejected::class);
 });
 
 it('throws exception when filter is invalid', function () {

@@ -3,6 +3,7 @@
 namespace Notifiable\ReceiveEmail;
 
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
@@ -12,6 +13,7 @@ use Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderDomainWhitelistFilter;
+use Throwable;
 
 class ApplyFilters implements PipeFilterContract
 {
@@ -46,7 +48,20 @@ class ApplyFilters implements PipeFilterContract
                 continue;
             }
 
-            event(new EmailRejected($filterClass, $parsedMail->toMail()));
+            $mail = $parsedMail->toMail();
+
+            try {
+                event(new EmailRejected($filterClass, $mail));
+            } catch (Throwable $exception) {
+                // A rejected message must be Discarded exactly once regardless
+                // of listener health: letting a listener failure escape would
+                // tempfail the pipe and have Postfix redeliver — and re-reject
+                // — mail a filter deliberately rejected, until queue expiry.
+                Log::error('An EmailRejected listener threw; the rejected message is still discarded.', [
+                    'filter' => $filterClass,
+                    'exception' => $exception,
+                ]);
+            }
 
             return false;
         }

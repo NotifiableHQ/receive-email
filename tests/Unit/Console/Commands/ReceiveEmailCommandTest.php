@@ -126,6 +126,72 @@ it('discards filter-rejected mail with EX_OK after dispatching EmailRejected', f
     Event::assertNotDispatched(EmailReceived::class);
 });
 
+it('discards rejected mail with EX_OK even when an EmailRejected listener throws', function () {
+    // No Event::fake() here: the throwing listener must actually run.
+    Log::spy();
+
+    $dispatched = 0;
+    Event::listen(EmailRejected::class, function () use (&$dispatched) {
+        $dispatched++;
+
+        throw new RuntimeException('Listener failure.');
+    });
+
+    // Create a mock filter that rejects the mail
+    $failingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($failingFilter);
+    app()->instance($filterClass, $failingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $exitCode = runReceiveEmailCommand();
+
+    // Discard: tempfail would have Postfix redeliver — and re-reject — the
+    // message on every retry until queue expiry.
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and($dispatched)->toBe(1);
+    Log::shouldHaveReceived('error')->once();
+});
+
+it('exits EX_TEMPFAIL when a filter fails unexpectedly', function () {
+    Event::fake();
+    Log::spy();
+
+    // Create a mock filter that fails like a transient outage would
+    $throwingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            throw new RuntimeException('Database is down.');
+        }
+    };
+
+    $filterClass = get_class($throwingFilter);
+    app()->instance($filterClass, $throwingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $exitCode = runReceiveEmailCommand();
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL);
+    Event::assertNotDispatched(EmailRejected::class);
+    Event::assertNotDispatched(EmailReceived::class);
+    Log::shouldHaveReceived('error')->once();
+});
+
 it('discards malformed mail with EX_OK and logs the discard', function () {
     Event::fake();
     Log::spy();
