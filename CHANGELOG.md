@@ -27,3 +27,9 @@ This release hardens the package around its core invariant: the server accepts i
 
 - Rejected mail no longer asks Postfix for a bounce it can never deliver, eliminating double-bounce queue churn.
 - TLS protocol selection modernized to `smtpd_tls_protocols = >=TLSv1.2` (Postfix 3.6+ syntax).
+- Whitelist mode no longer rejects the null envelope sender (`MAIL FROM:<>`): remote bounces and DSNs addressed to the receiving domain are accepted, as RFC 5321 requires (pre-release review finding).
+- `notifiable:sync-postfix` can no longer report "already up to date" over a stale access-map index: the map text and its `.db` are staged and renamed into place only after `postmap` succeeds, so a failed build is retried on the next run (pre-release review finding).
+- Setup now fails loudly when `systemctl reload postfix` fails instead of exiting 0 with the verified configuration never loaded (pre-release review finding).
+- Mail-log importer durability: offsets are persisted atomically after every dispatched rejection (previously once per run, non-atomically), so a mid-run failure replays at most the single in-flight line. The documented guarantee is now at-least-once with a minimal duplicate window (pre-release review finding).
+- The mail-log importer now recognizes postscreen enforce-mode drops (PREGREET, HANGUP, DNSBL) and classifies postscreen connection-count rejects as rate limits; previously these were invisible (pre-release review finding).
+- First importer run on an existing server now fast-forwards to the end of the log instead of dispatching the entire history; `--from-beginning` opts into the backlog (pre-release review finding).
