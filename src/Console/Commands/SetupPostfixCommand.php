@@ -4,6 +4,7 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Process;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 
@@ -11,12 +12,17 @@ class SetupPostfixCommand extends ConsoleCommand
 {
     public const POSTFIX_DIR = '/etc/postfix';
 
+    /**
+     * The Postfix configuration directory. Overridable in tests.
+     */
+    public static string $postfixDirectory = self::POSTFIX_DIR;
+
     private const DOMAIN_PATTERN = '/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/';
 
     /** @var string */
     protected $signature = 'notifiable:setup-postfix
         {domain : The domain where to receive emails from.}
-        {--user= : The system user to run the pipe command as.}
+        {--user= : The system user to run the pipe command as. Defaults to $SUDO_USER, then the current user.}
         {--tls-cert= : Path to the TLS certificate file (PEM format).}
         {--tls-key= : Path to the TLS private key file (PEM format).}
         {--with-spf : Install and configure SPF verification via policyd-spf.}';
@@ -40,9 +46,11 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         try {
+            $user = $this->resolvePipeUser();
+
             $this->installPostfix($domain);
             $this->configureMainConfigFile($domain);
-            $this->configureMasterConfigFile();
+            $this->configureMasterConfigFile($user);
 
             if ($this->option('with-spf')) {
                 $this->configureSPF();
@@ -64,9 +72,9 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nInstalling Postfix\n");
 
-        $postfixCheck = shell_exec('dpkg -l | grep postfix');
+        $postfixCheck = Process::run('dpkg -l | grep postfix')->output();
 
-        if (is_string($postfixCheck) && str($postfixCheck)->contains(' postfix ')) {
+        if (str($postfixCheck)->contains(' postfix ')) {
             $this->line('Postfix is already installed.');
 
             return;
@@ -74,10 +82,10 @@ class SetupPostfixCommand extends ConsoleCommand
 
         $escapedDomain = escapeshellarg($domain);
 
-        $this->line((string) shell_exec('apt-get update'));
-        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/mailname string {$escapedDomain}\""));
-        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/main_mailer_type string 'Internet Site'\""));
-        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix'));
+        $this->line(Process::run('apt-get update')->output());
+        $this->line(Process::run("echo \"postfix postfix/mailname string {$escapedDomain}\" | debconf-set-selections")->output());
+        $this->line(Process::run("echo \"postfix postfix/main_mailer_type string 'Internet Site'\" | debconf-set-selections")->output());
+        $this->line(Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix')->output());
     }
 
     /**
@@ -178,7 +186,7 @@ class SetupPostfixCommand extends ConsoleCommand
     /**
      * Configure the master.cf file.
      */
-    private function configureMasterConfigFile(): void
+    private function configureMasterConfigFile(string $user): void
     {
         $this->info("\nConfiguring the Master config file.\n");
 
@@ -191,7 +199,6 @@ class SetupPostfixCommand extends ConsoleCommand
             throw new RuntimeException("'smtp inet' is missing from {$masterConfig}.");
         }
 
-        $user = $this->resolveUser();
         $command = $this->getReceiveEmailCommand();
         $concurrency = config('receive_email.pipe-concurrency', 4);
 
@@ -206,7 +213,7 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nConfiguring SPF verification\n");
 
-        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python'));
+        $this->line(Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python')->output());
 
         $mainConfig = $this->getConfigPath('main.cf');
         $this->upsertLine($mainConfig, 'policy-spf_time_limit = 3600s');
@@ -219,33 +226,55 @@ class SetupPostfixCommand extends ConsoleCommand
         $this->upsertLine($masterConfig, 'policy-spf unix -  n  n  -  0  spawn user=policyd-spf argv=/usr/bin/policyd-spf');
     }
 
-    private function resolveUser(): string
+    /**
+     * Resolve the system user the pipe command runs as: the --user option,
+     * then $SUDO_USER, then the current user. Postfix refuses to execute
+     * pipe commands as a privileged user, so resolving to root must abort
+     * setup before anything is mutated.
+     */
+    private function resolvePipeUser(): string
     {
         /** @var string|null $user */
         $user = $this->option('user');
 
         if ($user === null) {
-            $user = function_exists('posix_geteuid')
-                ? posix_getpwuid(posix_geteuid())['name'] ?? get_current_user()
-                : get_current_user();
+            $sudoUser = getenv('SUDO_USER');
+
+            $user = is_string($sudoUser) && $sudoUser !== ''
+                ? $sudoUser
+                : $this->currentUser();
         }
 
         if (! preg_match('/^[a-zA-Z0-9_-]+$/', $user)) {
             throw new RuntimeException("Invalid system user: {$user}");
         }
 
+        if ($user === 'root') {
+            throw new RuntimeException(
+                'The pipe command cannot run as root: Postfix refuses to execute pipe commands as a privileged user. '
+                .'Re-run as `sudo php artisan notifiable:setup-postfix` from your deploy user, or pass --user=<deploy-user> explicitly.'
+            );
+        }
+
         return $user;
+    }
+
+    private function currentUser(): string
+    {
+        return function_exists('posix_geteuid')
+            ? posix_getpwuid(posix_geteuid())['name'] ?? get_current_user()
+            : get_current_user();
     }
 
     private function reloadPostfix(): void
     {
         $this->info("\nReloading postfix\n");
-        $this->line((string) shell_exec('systemctl reload postfix'));
+        $this->line(Process::run('systemctl reload postfix')->output());
     }
 
     private function getConfigPath(string $config): string
     {
-        $path = self::POSTFIX_DIR.'/'.$config;
+        $path = static::$postfixDirectory.'/'.$config;
 
         if (! file_exists($path)) {
             throw new RuntimeException("The {$path} file does not exist!");

@@ -85,19 +85,16 @@ You'll have to show `Advance Settings` to select this.
 5. SSH into your Forge server and go to your site directory. Then run the setup command as a `super user`:
 ```bash
 sudo php artisan notifiable:setup-postfix domain-that-receives-email.com \
-    --user=forge \
     --tls-cert=/etc/nginx/ssl/your-application-domain.com/server.crt \
     --tls-key=/etc/nginx/ssl/your-application-domain.com/server.key \
     --with-spf
 ```
 
-> **Important:** Always pass `--user=forge` (or your deploy user) when running with `sudo`. Without it, the pipe transport will run as `root`.
-
 **Available options:**
 
 | Option | Description |
 |--------|-------------|
-| `--user=forge` | The system user Postfix runs the pipe command as. Required when using `sudo`. |
+| `--user=forge` | The system user Postfix runs the pipe command as. Defaults to `$SUDO_USER` when run with `sudo`, otherwise the current user. Setup aborts if the resolved user is `root`. |
 | `--tls-cert=` | Path to the TLS certificate file (PEM format). Enables opportunistic TLS for inbound SMTP. |
 | `--tls-key=` | Path to the TLS private key file (PEM format). Must be provided together with `--tls-cert`. |
 | `--with-spf` | Installs `postfix-policyd-spf-python` and configures SPF verification for inbound mail. |
