@@ -3,6 +3,7 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
+use Illuminate\Contracts\Console\Isolatable;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Process;
 use Notifiable\ReceiveEmail\Console\Commands\Concerns\ManagesPostfixConfig;
@@ -15,8 +16,13 @@ use Symfony\Component\Console\Command\Command;
  * check_sender_access maps keyed on the Envelope Sender, and rewrites
  * smtpd_sender_restrictions to enforce them as SMTP-time Rejection (ADR-0001).
  * This command owns the smtpd_sender_restrictions parameter.
+ *
+ * Concurrent syncs interleave renames at the fixed <map>.tmp staging path
+ * and can leave a mismatched live text/.db pair that later runs report as
+ * already up to date; Isolatable lets every entry point (deploy hook and
+ * manual) contend on one command mutex via --isolated.
  */
-class SyncPostfixCommand extends ConsoleCommand
+class SyncPostfixCommand extends ConsoleCommand implements Isolatable
 {
     use ManagesPostfixConfig;
 

@@ -1,6 +1,8 @@
 <?php
 
+use Illuminate\Console\CacheCommandMutex;
 use Illuminate\Support\Facades\Process;
+use Notifiable\ReceiveEmail\Console\Commands\SyncPostfixCommand;
 use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 
 beforeEach(function () {
@@ -243,6 +245,37 @@ it('reloads on the next run after --no-reload wrote configuration', function () 
         ->assertSuccessful();
 
     Process::assertRanTimes('systemctl reload postfix', 1);
+});
+
+it('skips an isolated run while another sync holds the command mutex', function () {
+    config()->set('cache.default', 'array');
+    config()->set('receive_email.sender-domain-blacklist', ['bad.test']);
+
+    $mutex = app(CacheCommandMutex::class);
+    $command = app(SyncPostfixCommand::class);
+
+    expect($mutex->create($command))->toBeTrue();
+
+    try {
+        // Overlapping syncs interleave renames at the fixed staging path;
+        // the isolated run must skip without touching the maps.
+        $this->artisan('notifiable:sync-postfix', ['--isolated' => true])
+            ->expectsOutputToContain('already running')
+            ->assertSuccessful();
+    } finally {
+        $mutex->forget($command);
+    }
+
+    Process::assertNothingRan();
+    expect(file_exists($this->postfixDir.'/notifiable_sender_blacklist'))->toBeFalse();
+
+    // Once the mutex is free, an isolated run syncs normally.
+    $this->artisan('notifiable:sync-postfix', ['--isolated' => true])->assertSuccessful();
+
+    expect(file_get_contents($this->postfixDir.'/notifiable_sender_blacklist'))
+        ->toContain("bad.test\tREJECT");
+
+    Process::assertRan('systemctl reload postfix');
 });
 
 it('aborts when a list entry contains whitespace', function () {

@@ -154,10 +154,10 @@ By default, setup configures SPF verification for inbound mail — SPF is what m
 7. If you use the sender list config keys, re-sync the Postfix access maps whenever the lists change — the natural place is your Forge deploy script:
 
 ```bash
-sudo php artisan notifiable:sync-postfix
+sudo php artisan notifiable:sync-postfix --isolated
 ```
 
-The command is idempotent and only reloads Postfix when something actually changed, so it is safe to run on every deploy. See [Envelope Sender filtering](#envelope-sender-filtering) for what it does.
+The command is idempotent and only reloads Postfix when something actually changed, so it is safe to run on every deploy. `--isolated` makes overlapping runs take turns: the command implements Laravel's [`Isolatable`](https://laravel.com/docs/artisan#isolatable-commands) contract, and two deploys syncing concurrently would otherwise race on the map staging files. See [Envelope Sender filtering](#envelope-sender-filtering) for what it does.
 
 8. To surface mail rejected during the SMTP transaction (sender lists, SPF, rate limits) inside your application, set up the mail-log importer — see [Observing SMTP-time Rejections](#observing-smtp-time-rejections).
 
@@ -181,7 +181,7 @@ To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup
 The `sender-domain-whitelist`, `sender-domain-blacklist`, `sender-address-whitelist`, and `sender-address-blacklist` config lists are enforced at SMTP time as Postfix access maps keyed on the Envelope Sender — the SMTP `MAIL FROM` address, the identity SPF verifies. The setup command syncs them once; whenever the lists change, re-sync them (e.g. from a deploy hook, see [Forge Deployment](#forge-deployment)):
 
 ```bash
-sudo php artisan notifiable:sync-postfix
+sudo php artisan notifiable:sync-postfix --isolated
 ```
 
 When any whitelist has entries, the server rejects every sender not present in a whitelist. With only blacklists, listed senders are rejected and everyone else is accepted; a blacklisted sender is rejected even when a whitelist would also match it. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code (the [mail-log importer](#observing-smtp-time-rejections) closes that visibility gap).
