@@ -2,6 +2,7 @@
 
 use Illuminate\Console\CacheCommandMutex;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Console\Commands\ImportMailLogCommand;
 use Notifiable\ReceiveEmail\Enums\RejectionClass;
 use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
@@ -510,6 +511,42 @@ it('fails when the offset directory cannot be created', function () {
         ->assertFailed();
 
     Event::assertNotDispatched(SmtpRejectionObserved::class);
+});
+
+it('warns loudly and fast-forwards when the offset state file is corrupt', function () {
+    Event::fake();
+
+    copy(mailLogFixture('mixed.log'), $this->logPath);
+
+    mkdir($this->offsetDirectory, 0755, true);
+    file_put_contents($this->offsetPath, 'not json');
+
+    Log::shouldReceive('warning')->once()->with(Mockery::on(
+        fn (string $message) => str_contains($message, 'could not be read or parsed')
+            && str_contains($message, 'will NOT be dispatched')
+    ));
+
+    // The stored position is gone; the run must say so loudly instead of
+    // silently impersonating a first run, then fast-forward as one.
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('could not be read or parsed')
+        ->expectsOutputToContain('No stored offset; starting at the current end')
+        ->assertSuccessful();
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
+
+    // The fast-forward rewrites the state file, so the next run resumes
+    // normally and imports only what was appended since.
+    file_put_contents($this->logPath, smtpdRejectLine('after-corruption@blocked.example')."\n", FILE_APPEND);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'after-corruption@blocked.example';
+    });
 });
 
 it('fails with guidance when the mail log is missing or unreadable', function () {

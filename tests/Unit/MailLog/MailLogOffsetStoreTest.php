@@ -32,11 +32,14 @@ it('returns null when the state file is missing', function () {
     expect((new MailLogOffsetStore($this->path))->get())->toBeNull();
 });
 
-it('returns null when the state file is corrupt', function ($contents) {
+it('throws when the state file exists but is corrupt', function ($contents) {
     mkdir($this->directory, 0755, true);
     file_put_contents($this->path, $contents);
 
-    expect((new MailLogOffsetStore($this->path))->get())->toBeNull();
+    // Corrupt must not read as "no stored position": the caller has to
+    // surface the lost offset instead of silently treating it as a first run.
+    expect(fn () => (new MailLogOffsetStore($this->path))->get())
+        ->toThrow(RuntimeException::class, 'exists but could not be read or parsed');
 })->with([
     'not json',
     '{"inode": 123, "offset":',

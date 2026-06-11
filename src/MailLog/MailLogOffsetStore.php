@@ -11,8 +11,12 @@ class MailLogOffsetStore
     ) {}
 
     /**
-     * A missing or corrupt state file reads as no stored position, never
-     * failing; the importer treats that as a first run.
+     * A missing state file reads as no stored position — a first run.
+     *
+     * @throws RuntimeException when the state file exists but cannot be
+     *                          read or parsed. The stored position is unrecoverable, and the
+     *                          caller must surface that loss instead of silently treating a
+     *                          corrupt file like a first run.
      */
     public function get(): ?MailLogPosition
     {
@@ -20,16 +24,12 @@ class MailLogOffsetStore
             return null;
         }
 
-        $contents = file_get_contents($this->path);
+        $contents = @file_get_contents($this->path);
 
-        if ($contents === false) {
-            return null;
-        }
-
-        $state = json_decode($contents, true);
+        $state = $contents === false ? null : json_decode($contents, true);
 
         if (! is_array($state) || ! is_int($state['offset'] ?? null)) {
-            return null;
+            throw new RuntimeException("The offset state file [{$this->path}] exists but could not be read or parsed.");
         }
 
         $inode = $state['inode'] ?? null;

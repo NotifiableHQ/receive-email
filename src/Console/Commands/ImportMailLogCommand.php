@@ -5,10 +5,12 @@ namespace Notifiable\ReceiveEmail\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Console\Isolatable;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Events\SmtpRejectionObserved;
 use Notifiable\ReceiveEmail\MailLog\MailLogOffsetStore;
 use Notifiable\ReceiveEmail\MailLog\MailLogPosition;
 use Notifiable\ReceiveEmail\MailLog\RejectionLineParser;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -39,7 +41,21 @@ class ImportMailLogCommand extends Command implements Isolatable
 
         $store = new MailLogOffsetStore(Config::string('receive_email.mail-log-offset-path'));
 
-        $position = $store->get();
+        try {
+            $position = $store->get();
+        } catch (RuntimeException $exception) {
+            // The stored position is unrecoverable; the import must go on,
+            // but silently restarting would hide that everything logged
+            // since the last good offset is being skipped.
+            $position = null;
+
+            $message = $exception->getMessage().' '.($this->option('from-beginning')
+                ? 'Continuing as a first run with --from-beginning: the entire log will be re-imported, and listeners may see rejections they have already processed.'
+                : 'Continuing as a first run: rejections logged between the last successful import and now will NOT be dispatched. Run with --from-beginning to re-import the entire log instead (listeners may see duplicates).');
+
+            $this->warn($message);
+            Log::warning($message);
+        }
 
         // On a first run the log holds arbitrarily old history; fast-forward
         // to the end without dispatching so listeners only see rejections
