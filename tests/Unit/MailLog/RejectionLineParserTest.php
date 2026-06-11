@@ -55,6 +55,33 @@ it('classifies SPF rejections', function () {
         ->and($rejection->envelopeSender)->toBe('forged@bank.example');
 });
 
+it('classifies SPF softfail policy rejections', function () {
+    $line = 'Jun  9 12:02:25 mail postfix/smtpd[31011]: NOQUEUE: reject: RCPT from mail.forged.example[198.51.100.7]: 550 5.7.23 <inbox@receiver.test>: Recipient address rejected: Message rejected due to: Receiver policy for SPF Softfail. Please see http://www.openspf.net/Why; from=<forged@bank.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.forged.example>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection->rejectionClass)->toBe(RejectionClass::Spf);
+});
+
+it('classifies a list rejection from a sender embedding spf as envelope-list', function () {
+    $line = 'Jun  9 12:02:30 mail postfix/smtpd[31011]: NOQUEUE: reject: RCPT from mail.evil.example[203.0.113.66]: 554 5.7.1 <spf-bounces@evil.example>: Sender address rejected: Access denied; from=<spf-bounces@evil.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.evil.example>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection->rejectionClass)->toBe(RejectionClass::EnvelopeList)
+        ->and($rejection->envelopeSender)->toBe('spf-bounces@evil.example');
+});
+
+it('classifies a list rejection from a sender embedding the policyd-spf reason as envelope-list', function () {
+    // A quoted local part can embed arbitrary text, including the exact
+    // marker the SPF arm anchors to; the "Access denied" tail must win.
+    $line = 'Jun  9 12:02:35 mail postfix/smtpd[31011]: NOQUEUE: reject: RCPT from mail.evil.example[203.0.113.66]: 554 5.7.1 <"message rejected due to: spf fail"@evil.example>: Sender address rejected: Access denied; from=<"message rejected due to: spf fail"@evil.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.evil.example>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection->rejectionClass)->toBe(RejectionClass::EnvelopeList);
+});
+
 it('classifies HELO rejections', function () {
     $line = 'Jun  9 12:03:30 mail postfix/smtpd[31012]: NOQUEUE: reject: RCPT from unknown[192.0.2.9]: 504 5.5.2 <localhost>: Helo command rejected: need fully-qualified hostname; from=<someone@somewhere.example> to=<inbox@receiver.test> proto=SMTP helo=<localhost>';
 
@@ -63,6 +90,14 @@ it('classifies HELO rejections', function () {
     expect($rejection->rejectionClass)->toBe(RejectionClass::Helo)
         ->and($rejection->clientHost)->toBe('unknown')
         ->and($rejection->clientIp)->toBe('192.0.2.9');
+});
+
+it('classifies a helo rejection from a helo embedding spf as helo', function () {
+    $line = 'Jun  9 12:03:35 mail postfix/smtpd[31012]: NOQUEUE: reject: RCPT from unknown[192.0.2.10]: 450 4.7.1 <spf.example.com>: Helo command rejected: Host not found; from=<someone@somewhere.example> to=<inbox@receiver.test> proto=SMTP helo=<spf.example.com>';
+
+    $rejection = $this->parser->parse($line);
+
+    expect($rejection->rejectionClass)->toBe(RejectionClass::Helo);
 });
 
 it('does not classify non-FQDN sender rejections as envelope-list', function () {

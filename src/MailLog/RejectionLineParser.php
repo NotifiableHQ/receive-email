@@ -111,23 +111,44 @@ class RejectionLineParser
         );
     }
 
+    /**
+     * The reason embeds attacker-influenced content — the sender address,
+     * HELO hostname, or recipient precede the Postfix-generated detail — so
+     * the arms anchor to that detail and run specific-before-broad: a list
+     * rejection from <spf-bounces@evil.example> or a HELO of
+     * spf.example.com must never classify as Spf.
+     */
     private function classify(string $reason, RejectionClass $default = RejectionClass::Other): RejectionClass
     {
         $reason = strtolower($reason);
 
         return match (true) {
-            str_contains($reason, 'spf') => RejectionClass::Spf,
-            str_contains($reason, 'helo command rejected') => RejectionClass::Helo,
             // reject_non_fqdn_sender ("need fully-qualified address") and
             // reject_unknown_sender_domain ("Domain not found") share the
             // "Sender address rejected" prefix; only the "Access denied"
             // detail marks an Envelope Sender list decision (logged by both
-            // the blacklist REJECT and the whitelist catch-all reject).
-            str_contains($reason, 'sender address rejected: access denied') => RejectionClass::EnvelopeList,
+            // the blacklist REJECT and the whitelist catch-all reject). The
+            // detail ends the reason, after any attacker-supplied text.
+            str_ends_with($reason, 'sender address rejected: access denied') => RejectionClass::EnvelopeList,
+            str_contains($reason, 'helo command rejected') => RejectionClass::Helo,
+            $this->isSpfReason($reason) => RejectionClass::Spf,
             str_contains($reason, 'rate limit'),
             str_contains($reason, 'too many connections') => RejectionClass::RateLimit,
             default => $default,
         };
+    }
+
+    /**
+     * policyd-spf reject reasons read "Message rejected due to: SPF fail -
+     * not authorized" (Softfail and error variants keep the prefix), so SPF
+     * is only recognized after that marker — a bare "spf" substring would
+     * also match senders and HELO hostnames embedded earlier in the reason.
+     */
+    private function isSpfReason(string $reason): bool
+    {
+        $marker = strpos($reason, 'message rejected due to:');
+
+        return $marker !== false && str_contains(substr($reason, $marker), 'spf');
     }
 
     private function parseTimestamp(?string $value): ?CarbonImmutable
