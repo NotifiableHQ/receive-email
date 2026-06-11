@@ -295,6 +295,39 @@ it('dispatches rejections appended during the first-run fast-forward on the next
     });
 });
 
+it('dispatches rejections appended to a log that was empty at open on the next run', function () {
+    Event::fake();
+
+    // A just-rotated log is empty when the importer opens it, so the
+    // fast-forward anchor is zero: the very first line read would already
+    // start at/beyond the anchor and must not be consumed.
+    GrowingMailLogStream::$target = $this->logPath;
+    GrowingMailLogStream::$appendOnStat = smtpdRejectLine('just-rotated@blocked.example')."\n";
+
+    stream_wrapper_register('growlog', GrowingMailLogStream::class);
+
+    try {
+        config()->set('receive_email.mail-log-path', 'growlog://mail.log');
+
+        $this->artisan('notifiable:import-mail-log')->assertSuccessful();
+    } finally {
+        stream_wrapper_unregister('growlog');
+    }
+
+    Event::assertNotDispatched(SmtpRejectionObserved::class);
+
+    config()->set('receive_email.mail-log-path', $this->logPath);
+
+    $this->artisan('notifiable:import-mail-log')
+        ->expectsOutputToContain('Observed 1 SMTP-time rejection(s).')
+        ->assertSuccessful();
+
+    Event::assertDispatchedTimes(SmtpRejectionObserved::class, 1);
+    Event::assertDispatched(SmtpRejectionObserved::class, function (SmtpRejectionObserved $event) {
+        return $event->rejection->envelopeSender === 'just-rotated@blocked.example';
+    });
+});
+
 it('persists the offset between runs and never duplicates events', function () {
     Event::fake();
 

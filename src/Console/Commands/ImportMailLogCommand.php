@@ -80,7 +80,13 @@ class ImportMailLogCommand extends Command implements Isolatable
                 fseek($handle, $offset);
             }
 
-            while (($line = fgets($handle)) !== false) {
+            // The fast-forward consumes only lines that start before the
+            // size captured at open: the anchor is checked before each read,
+            // never after, so a line appended during the scan — even to a
+            // file that was empty at open — is left at/beyond the persisted
+            // offset for the next run, which dispatches it instead of
+            // silently consuming it.
+            while ($fastForward && $offset < $size && ($line = fgets($handle)) !== false) {
                 // A line without a newline is still being written; leave it
                 // (and the offset) for the next run.
                 if (! str_ends_with($line, "\n")) {
@@ -88,17 +94,14 @@ class ImportMailLogCommand extends Command implements Isolatable
                 }
 
                 $offset += strlen($line);
+            }
 
-                if ($fastForward) {
-                    // Stop at the size captured at open; lines appended while
-                    // this scan runs belong to the next run, which dispatches
-                    // them instead of silently consuming them.
-                    if ($offset >= $size) {
-                        break;
-                    }
-
-                    continue;
+            while (! $fastForward && ($line = fgets($handle)) !== false) {
+                if (! str_ends_with($line, "\n")) {
+                    break;
                 }
+
+                $offset += strlen($line);
 
                 $line = rtrim($line, "\r\n");
 
