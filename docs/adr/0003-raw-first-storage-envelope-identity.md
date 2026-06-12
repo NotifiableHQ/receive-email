@@ -1,0 +1,18 @@
+# Store raw mail before parsing; identity from the envelope, enrichment from the headers
+
+Postfix accepts a message and pipes it in, but the pipeline parsed it *before* storing it: `Message-ID`, `Date`, and a sender header were extracted to build the DB row, and mail the parser disliked was discarded with only a log line — accepted mail could vanish because of a missing header, and the row's identity rested on attacker-controlled header data (including a `UNIQUE` index on `Message-ID`, where a collision sent the second delivery into a multi-day tempfail loop). We decided to invert the dependency: the pipe receives the envelope (Envelope Sender, Envelope Recipients, client address, queue ID) as Postfix pipe macros, writes the raw message to storage first — outside any DB transaction, under a pre-generated ULID — then records an `Email` row from envelope data alone, and only then parses. Everything header-derived (`message_id`, `sent_at`, the header-sender `Sender` relation) is nullable best-effort enrichment, populated synchronously in the same invocation when parsing succeeds (`parsed_at` set) and left null when it does not (Malformed Mail: kept, announced via its own event, never lost).
+
+## Considered Options
+
+- **Keep parse-first and discard malformed mail** — coherent with receive-only semantics, but accepted-then-vanished mail is silent data loss the application can never recover; rejected.
+- **Recipient-scoped rows** (`destination_recipient_limit = 1`) — rows map 1:1 to addresses, but one N-recipient message costs N framework boots and N raw copies under a `maxproc` of 4; rows are message-scoped instead, with Envelope Recipients stored as an array and per-recipient semantics left to the application.
+- **Async parse via a queued job** — faster pipe and crash isolation, but the package would require a running queue worker for mail to become readable, and retry semantics would move out of Postfix's queue into the app's. Parse stays synchronous; the nullable `parsed_at` deliberately leaves the async door open without a schema change.
+- **Keep `Message-ID` uniqueness as dedup** — at-most-once per Message-ID silently drops legitimate second deliveries (the same newsletter to two recipients arrives as two transactions with one Message-ID). The constraint is dropped for a plain index; the ULID is the identity, and dedup — if ever wanted — is application policy with envelope context.
+
+## Consequences
+
+- The migration changes shape: `message_id` and `sent_at` become nullable, `message_id` loses `UNIQUE`, the `Sender` FK becomes nullable with `nullOnDelete` (a DB-level cascade bypassed the Eloquent hook that deletes the raw file), and `envelope_sender`, `envelope_recipients`, `client_address`, `queue_id`, `parsed_at` are added.
+- `EmailReceived` keeps its "parseable mail" contract; Malformed Mail dispatches a distinct event. Pipe-time Filters never see Malformed Mail (they need parsed headers), so a custom filter is not a security boundary against deliberately malformed input — applications that care must also listen to the malformed-mail event.
+- The Envelope Sender column is honestly null for `MAIL FROM:<>` (DSNs): the pipe's `null_sender=` attribute must be set to empty, or Postfix substitutes the literal `MAILER-DAEMON`.
+- Storing raw outside the transaction means a failed commit must delete the just-written file, and a crash after commit can yield a duplicate delivery (Postfix redelivers) — duplicates are acceptable; loss is not.
+- Two identities coexist by design: the trusted Envelope Sender (column) and the displayed Header Sender (`Sender` relation). Collapsing them would re-blur the distinction ADR-0001 established.
