@@ -84,12 +84,14 @@ it('creates an isolated parser for each source call', function () {
 
 it('stores the email correctly', function () {
     $path = 'emails/test-email.eml';
-    $stream = 'email content';
     $diskName = 'test-disk';
 
     // Mock the disk
     $disk = Storage::fake($diskName);
     Config::set('receive_email.storage-disk', $diskName);
+
+    $stream = fopen('php://temp', 'r+');
+    fwrite($stream, 'email content');
 
     $this->parser->shouldReceive('getStream')
         ->once()
@@ -98,8 +100,57 @@ it('stores the email correctly', function () {
     $result = $this->parsedMail->store($path);
 
     expect($result)->toBeTrue();
-    $disk->assertExists($path, $stream);
+    $disk->assertExists($path, 'email content');
 });
+
+it('stores from the parser data when the parser holds no stream', function () {
+    // A Source::Text parser never carries a stream: the vendor's
+    // getStream() is null and only getData() holds the raw message.
+    $path = 'emails/text-source.eml';
+    $diskName = 'test-disk';
+
+    $disk = Storage::fake($diskName);
+    Config::set('receive_email.storage-disk', $diskName);
+
+    $this->parser->shouldReceive('getStream')->once()->andReturnNull();
+    $this->parser->shouldReceive('getData')->once()->andReturn('raw message');
+
+    $result = $this->parsedMail->store($path);
+
+    expect($result)->toBeTrue();
+    $disk->assertExists($path, 'raw message');
+});
+
+it('refuses to store when the parser has neither stream nor data', function () {
+    Storage::fake('test-disk');
+    Config::set('receive_email.storage-disk', 'test-disk');
+
+    $this->parser->shouldReceive('getStream')->once()->andReturnNull();
+    $this->parser->shouldReceive('getData')->once()->andReturnNull();
+
+    $this->parsedMail->store('emails/no-source.eml');
+})->throws(LogicException::class, 'Cannot store a mail that has no source');
+
+it('stores the raw message for a text source', function () {
+    $path = 'emails/real-text-source.eml';
+    $diskName = 'test-disk';
+
+    $disk = Storage::fake($diskName);
+    Config::set('receive_email.storage-disk', $diskName);
+
+    $raw = "From: test@example.com\r\nTo: to@example.com\r\nSubject: Test\r\n\r\nBody";
+
+    $result = $this->parsedMail->source($raw, Source::Text)->store($path);
+
+    expect($result)->toBeTrue();
+
+    // The stored object must round-trip non-empty: a regression to
+    // writing the (null) stream can never pass this.
+    $stored = $disk->get($path);
+
+    expect($stored)->toContain('Subject: Test')
+        ->and($stored)->toContain('Body');
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
 
 it('gets message id correctly', function () {
     $messageId = '<test-message-id@example.com>';

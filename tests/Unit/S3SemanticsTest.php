@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Event;
 use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
+use Notifiable\ReceiveEmail\Events\MalformedEmailReceived;
 use Notifiable\ReceiveEmail\Exceptions\FailedToReadException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Models\Email;
@@ -40,7 +41,10 @@ beforeEach(function () {
 });
 
 it('stores, re-reads, and deletes the raw message end-to-end on S3', function () {
-    Event::fake();
+    // Scoped fake: an argument-less Event::fake() would also fake the
+    // Eloquent model events, silently disabling the deleted-hook that
+    // removes the raw file from the disk.
+    Event::fake([EmailReceived::class, MalformedEmailReceived::class]);
 
     $raw = "Message-ID: <s3-semantics@example.com>\r\n"
         ."Date: Wed, 23 Aug 2023 10:21:44 +0000\r\n"
@@ -62,12 +66,21 @@ it('stores, re-reads, and deletes the raw message end-to-end on S3', function ()
     expect(storage()->exists($email->path()))->toBeTrue()
         ->and($email->parsed_at)->not->toBeNull();
 
+    // The stored object must round-trip non-empty: a regression to
+    // writing the text-source parser's (null) stream can never pass this.
+    $stored = storage()->get($email->path());
+
+    expect($stored)->toContain('Message-ID: <s3-semantics@example.com>')
+        ->and($stored)->toContain('Body over S3');
+
     // The read path re-downloads the raw message from the remote disk.
     $parsedMail = $email->parsedMail();
 
+    // The parser normalizes the message's trailing newline on both the
+    // store and the re-read, so the body is asserted by containment.
     expect($parsedMail->id())->toBe('<s3-semantics@example.com>')
         ->and($parsedMail->subject())->toBe('S3 semantics')
-        ->and($parsedMail->text())->toBe('Body over S3');
+        ->and($parsedMail->text())->toContain('Body over S3');
 
     Event::assertDispatched(EmailReceived::class, fn ($event) => $event->email->is($email));
 

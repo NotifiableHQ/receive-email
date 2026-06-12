@@ -180,7 +180,12 @@ it('keeps mail whose Date header is present but unparseable as Malformed Mail', 
         ->and($email->parsed_at)->toBeNull()
         ->and($email->sender)->toBeNull();
 
-    Storage::disk('local')->assertExists($email->path());
+    // The stored raw message must round-trip non-empty: a regression to
+    // writing the text-source parser's (null) stream can never pass this.
+    $stored = Storage::disk('local')->get($email->path());
+
+    expect($stored)->toContain('Message-ID: <bad-date@example.com>')
+        ->and($stored)->toContain('Body');
 
     Event::assertDispatched(MalformedEmailReceived::class, fn ($event) => $event->email->is($email));
     Event::assertNotDispatched(EmailReceived::class);
