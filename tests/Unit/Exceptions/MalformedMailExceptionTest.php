@@ -12,6 +12,16 @@ it('creates exception for missing header', function () {
         ->and($exception->getMessage())->toContain('header is missing');
 });
 
+it('creates exception for invalid header', function () {
+    $headerKey = 'date';
+    $exception = MalformedMailException::invalidHeader($headerKey);
+
+    expect($exception)
+        ->toBeInstanceOf(MalformedMailException::class)
+        ->and($exception->getMessage())->toContain($headerKey)
+        ->and($exception->getMessage())->toContain('header cannot be parsed');
+});
+
 it('creates exception for missing sender', function () {
     $exception = MalformedMailException::missingSender();
 

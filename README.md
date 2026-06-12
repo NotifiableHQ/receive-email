@@ -169,12 +169,23 @@ After publishing the config file, you can tune the following settings in `config
 |-----|---------|-------------|
 | `message-size-limit` | `26214400` (25MB) | Maximum inbound email size in bytes. Written to Postfix's `message_size_limit`, and enforced again by the pipe command as a guard. |
 | `pipe-concurrency` | `4` | Maximum concurrent pipe processes. Maps to `maxproc` in `master.cf`. |
-| `storage-disk` | `local` | Filesystem disk for storing raw email files. |
+| `storage-disk` | `local` | Filesystem disk for storing raw email files. See [Raw message storage](#raw-message-storage). |
 | `email-table` | `emails` | Table name for the Email model. |
 | `sender-table` | `senders` | Table name for the Sender model. |
 | `email-filters` | `[]` | Custom Pipe-time Filter classes, applied in order after a message is accepted and piped in. |
 
 To apply changes to `message-size-limit` or `pipe-concurrency`, re-run the setup command.
+
+### Raw message storage
+
+Accepted mail is stored raw — byte-for-byte as received — on the disk named by `storage-disk`, and every read parses it back from that disk. Any Laravel filesystem disk works: the read path streams the file rather than assuming a local path, so S3 (via `league/flysystem-aws-s3-v3` in your application) is a supported configuration.
+
+Storage failure semantics are the same on every disk: a write that fails (returns `false` or throws) tempfails the delivery before any row is committed, so Postfix keeps the message queued and retries; reading a stored message whose raw file has gone missing or unreadable throws `Notifiable\ReceiveEmail\Exceptions\FailedToReadException`.
+
+Remote disks carry two operational caveats:
+
+- **The upload is synchronous, inside Postfix's delivery pipe.** The raw message is stored before the row commits, so upload latency sits in the delivery path: each delivery holds one of the pipe's `pipe-concurrency` (default 4) process slots until the upload completes, and a slow or flaky uplink throttles delivery throughput.
+- **Every `parsedMail()` call re-downloads the raw message.** The package keeps no local copy and no parsed cache; each read streams the full message from the remote disk again. Listeners that read the same message repeatedly pay one download per call — read once and keep what you need.
 
 ### Envelope Sender filtering
 

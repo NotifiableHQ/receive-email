@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use League\Flysystem\UnableToWriteFile;
 use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmailCommand;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
@@ -12,12 +13,16 @@ use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Events\MalformedEmailReceived;
+use Notifiable\ReceiveEmail\Exceptions\FailedToStoreException;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Support\Testing\FakeParsedMail;
+use Notifiable\ReceiveEmail\Tests\Fixtures\MisbehavingFilesystemAdapter;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
+
+use function Notifiable\ReceiveEmail\storage;
 
 /**
  * Run the command against an in-memory input stream instead of php://stdin,
@@ -53,6 +58,21 @@ function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello", ar
     $command->setLaravel(app());
 
     return $command->run(new ArrayInput($arguments), new NullOutput);
+}
+
+/**
+ * A FakeParsedMail whose store() writes through the configured storage
+ * disk, so disk-layer failure semantics reach the pipe for real.
+ */
+function diskBackedParsedMailFake(): FakeParsedMail
+{
+    return new class extends FakeParsedMail
+    {
+        public function store(string $path): bool
+        {
+            return storage()->put($path, "Subject: Test\r\n\r\nHello");
+        }
+    };
 }
 
 /**
@@ -380,6 +400,53 @@ it('exits EX_TEMPFAIL with no committed row when the storage write throws', func
     Event::assertNotDispatched(EmailReceived::class);
     Event::assertNotDispatched(MalformedEmailReceived::class);
     Log::shouldHaveReceived('error')->once();
+});
+
+it('exits EX_TEMPFAIL with no committed row when the disk silently fails the write', function () {
+    Event::fake();
+    Log::spy();
+
+    // A disk with Laravel's default 'throw' => false reports a failed
+    // write as put() === false; the checked store() must turn that into
+    // FailedToStoreException instead of committing a row without a file.
+    misbehavingStorageDisk(new MisbehavingFilesystemAdapter(failWrites: true));
+
+    ParsedMail::swap(diskBackedParsedMailFake()->fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]));
+
+    $exitCode = runReceiveEmailCommand();
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL)
+        ->and(Email::query()->count())->toBe(0);
+    Event::assertNotDispatched(EmailReceived::class);
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+    Log::shouldHaveReceived('error')
+        ->withArgs(fn (string $message, array $context) => $context['exception'] instanceof FailedToStoreException)
+        ->once();
+});
+
+it('exits EX_TEMPFAIL with no committed row when the disk throws on write', function () {
+    Event::fake();
+    Log::spy();
+
+    // The same failing adapter behind a disk configured 'throw' => true
+    // raises the Flysystem exception out of put() instead.
+    misbehavingStorageDisk(new MisbehavingFilesystemAdapter(failWrites: true), throw: true);
+
+    ParsedMail::swap(diskBackedParsedMailFake()->fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]));
+
+    $exitCode = runReceiveEmailCommand();
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL)
+        ->and(Email::query()->count())->toBe(0);
+    Event::assertNotDispatched(EmailReceived::class);
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+    Log::shouldHaveReceived('error')
+        ->withArgs(fn (string $message, array $context) => $context['exception'] instanceof UnableToWriteFile)
+        ->once();
 });
 
 it('exits EX_TEMPFAIL when the pipe command fails unexpectedly', function () {

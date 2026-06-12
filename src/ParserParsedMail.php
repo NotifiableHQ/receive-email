@@ -3,6 +3,7 @@
 namespace Notifiable\ReceiveEmail;
 
 use Carbon\CarbonImmutable;
+use Carbon\Exceptions\InvalidFormatException;
 use InvalidArgumentException;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
@@ -73,7 +74,14 @@ class ParserParsedMail implements ParsedMailContract
 
     public function date(): CarbonImmutable
     {
-        return $this->date ??= CarbonImmutable::parse($this->getHeaderOrFail('date'))->utc();
+        try {
+            return $this->date ??= CarbonImmutable::parse($this->getHeaderOrFail('date'))->utc();
+        } catch (InvalidFormatException) {
+            // A Date header that is present but unparseable is Malformed
+            // Mail — kept and announced, never tempfailed into Postfix's
+            // multi-day retry loop.
+            throw MalformedMailException::invalidHeader('date');
+        }
     }
 
     public function sender(): Address

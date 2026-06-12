@@ -11,6 +11,11 @@ class MalformedMailException extends Exception
         return new MalformedMailException("[{$key}] header is missing.");
     }
 
+    public static function invalidHeader(string $key): MalformedMailException
+    {
+        return new MalformedMailException("[{$key}] header cannot be parsed.");
+    }
+
     public static function missingSender(): MalformedMailException
     {
         return new MalformedMailException('Missing sender email address.');

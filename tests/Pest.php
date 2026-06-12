@@ -1,7 +1,12 @@
 <?php
 
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Process\PendingProcess;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Storage;
+use League\Flysystem\Filesystem as Flysystem;
+use Notifiable\ReceiveEmail\Tests\Fixtures\MisbehavingFilesystemAdapter;
 use Notifiable\ReceiveEmail\Tests\TestCase;
 
 /*
@@ -42,6 +47,20 @@ expect()->extend('toBeOne', function () {
 | functions to be used within your tests.
 |
 */
+
+/**
+ * Register a misbehaving Flysystem adapter as the package storage disk,
+ * standing in for a remote disk (S3) failing its writes or reads. With
+ * $throw = false (Laravel's disk default) failed operations surface as
+ * false/null returns; with $throw = true they raise the Flysystem
+ * exception, mirroring a disk configured with 'throw' => true.
+ */
+function misbehavingStorageDisk(MisbehavingFilesystemAdapter $adapter, bool $throw = false): void
+{
+    Storage::set('misbehaving', new FilesystemAdapter(new Flysystem($adapter), $adapter, ['throw' => $throw]));
+
+    Config::set('receive_email.storage-disk', 'misbehaving');
+}
 
 /**
  * Process fakes for postconf, backed by an in-memory store of main.cf

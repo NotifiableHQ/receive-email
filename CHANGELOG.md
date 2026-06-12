@@ -24,6 +24,7 @@ This release hardens the package around its core invariant: the server accepts i
 - postscreen as the pre-smtpd gatekeeper: zombies that talk before the SMTP greeting are dropped before consuming an smtpd process; tlsproxy keeps inbound STARTTLS working behind it.
 - Setup postflight verification: `postfix check` plus a check that `mydestination` includes the receiving domain, before Postfix is reloaded.
 - The pipe command buffers stdin and tempfails input exceeding `message-size-limit`, guarding against a hand-edited `main.cf`.
+- Remote-disk (S3) storage is now a tested, supported configuration: `Email::parsedMail()` reads the raw message back through a stream (`readStream()`) instead of a local filesystem path, so any Laravel disk works; a missing or unreadable raw file throws the new `FailedToReadException`. Disk failure semantics (write returning `false`, write throwing, read failing) are proven against a misbehaving Flysystem adapter, and CI exercises store → parse-read → delete against real S3 semantics (a MinIO job driving `league/flysystem-aws-s3-v3`). (ADR-0003)
 - Domain glossary (`CONTEXT.md`) and architecture decision records (`docs/adr/`).
 
 ### Fixed
@@ -52,3 +53,4 @@ This release hardens the package around its core invariant: the server accepts i
 - `notifiable:sync-postfix` implements `Isolatable`: overlapping runs can no longer interleave staging renames into a mismatched live map/index pair (pre-release review finding).
 - The importer's first-run fast-forward checks its anchor before consuming a line, closing the empty-at-open/partial-line case where the first appended rejection was silently eaten (pre-release review finding).
 - A corrupt importer state file now warns loudly (output + log) instead of silently impersonating a first run; documented under Known limitations (pre-release review finding).
+- A `Date:` header that is present but unparseable is now classified as Malformed Mail (kept and announced via `MalformedEmailReceived`, `parsed_at` null) instead of escaping as Carbon's `InvalidFormatException` and tempfail-looping the delivery in Postfix's queue for days (pre-release review finding).

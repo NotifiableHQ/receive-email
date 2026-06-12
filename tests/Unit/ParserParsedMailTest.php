@@ -151,6 +151,17 @@ it('throws exception when date header is missing', function () {
     $this->parsedMail->date();
 })->throws(MalformedMailException::class);
 
+it('classifies a present but unparseable date header as Malformed Mail', function () {
+    $this->parser->shouldReceive('getHeader')
+        ->once()
+        ->with('date')
+        ->andReturn('not a date');
+
+    // MalformedMailException routes to the keep-and-announce flow; Carbon's
+    // InvalidFormatException would tempfail-loop the mail for days.
+    $this->parsedMail->date();
+})->throws(MalformedMailException::class, '[date] header cannot be parsed.');
+
 it('gets sender from sender header', function () {
     $senderData = [['display' => 'Test Sender', 'address' => 'sender@example.com']];
 

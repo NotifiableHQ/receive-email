@@ -10,10 +10,12 @@ use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Envelope;
+use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Events\MalformedEmailReceived;
 use Notifiable\ReceiveEmail\Exceptions\FailedToStoreException;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
+use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
 use Notifiable\ReceiveEmail\StoreAndDispatch;
@@ -152,6 +154,37 @@ it('keeps Malformed Mail: raw file and envelope row survive with parsed_at null'
     });
     Event::assertNotDispatched(EmailReceived::class);
 });
+
+it('keeps mail whose Date header is present but unparseable as Malformed Mail', function () {
+    Event::fake();
+
+    $raw = "Message-ID: <bad-date@example.com>\r\n"
+        ."Date: not a date\r\n"
+        ."From: Sender Name <sender@example.com>\r\n"
+        ."To: recipient@example.com\r\n"
+        ."Subject: Bad date\r\n"
+        ."\r\n"
+        .'Body';
+
+    (new StoreAndDispatch)->handle(ParsedMail::source($raw, Source::Text), new Envelope(
+        'envelope-sender@example.com',
+        ['envelope-recipient@example.com'],
+    ));
+
+    // Unparseable Date is Malformed Mail: kept and announced, never
+    // tempfailed into Postfix's multi-day retry loop.
+    $email = Email::query()->sole();
+
+    expect($email->message_id)->toBeNull()
+        ->and($email->sent_at)->toBeNull()
+        ->and($email->parsed_at)->toBeNull()
+        ->and($email->sender)->toBeNull();
+
+    Storage::disk('local')->assertExists($email->path());
+
+    Event::assertDispatched(MalformedEmailReceived::class, fn ($event) => $event->email->is($email));
+    Event::assertNotDispatched(EmailReceived::class);
+})->skip(! extension_loaded('mailparse'), 'Requires mailparse extension');
 
 it('throws FailedToStoreException when the storage write returns false', function () {
     Event::fake();

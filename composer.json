@@ -22,6 +22,7 @@
     "require-dev": {
         "laravel/pint": "^1.21",
         "larastan/larastan": "^3.9",
+        "league/flysystem-aws-s3-v3": "^3.0",
         "pestphp/pest": "^3.7",
         "orchestra/testbench": "^10.1 || ^11.0"
     },

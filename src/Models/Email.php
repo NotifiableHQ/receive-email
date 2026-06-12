@@ -11,6 +11,7 @@ use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
+use Notifiable\ReceiveEmail\Exceptions\FailedToReadException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use RuntimeException;
 
@@ -113,9 +114,23 @@ class Email extends Model
         }
     }
 
+    /**
+     * Parse the stored raw message, read back as a stream so any configured
+     * disk works — a remote disk (S3) re-downloads the message on every call.
+     *
+     * @throws FailedToReadException
+     */
     public function parsedMail(): ParsedMailContract
     {
-        return ParsedMail::source(storage()->path($this->path()), Source::Path);
+        $path = $this->path();
+
+        $stream = storage()->readStream($path);
+
+        if (! is_resource($stream)) {
+            throw FailedToReadException::path($path);
+        }
+
+        return ParsedMail::source($stream, Source::Stream);
     }
 
     /**

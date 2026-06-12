@@ -8,10 +8,13 @@ use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Data\Recipients;
+use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
+use Notifiable\ReceiveEmail\Exceptions\FailedToReadException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
+use Notifiable\ReceiveEmail\Tests\Fixtures\MisbehavingFilesystemAdapter;
 
 beforeEach(function () {
     Config::set('receive_email.storage-disk', 'local');
@@ -179,7 +182,65 @@ it('can get ParsedMail from email file', function () {
         'sent_at' => now(),
     ]);
 
+    Storage::disk('local')->put($email->path(), 'raw message');
+
     expect($email->parsedMail())->toBeInstanceOf(ParsedMailContract::class);
+});
+
+it('reads the stored raw message back through a stream, never a local path', function () {
+    $email = Email::fromEnvelope(new Envelope(
+        'envelope-sender@example.com',
+        ['envelope-recipient@example.com'],
+    ));
+    $email->save();
+
+    Storage::disk('local')->put($email->path(), 'raw message');
+
+    $captured = new stdClass;
+
+    ParsedMail::shouldReceive('source')
+        ->once()
+        ->withArgs(function ($source, Source $type) use ($captured) {
+            $captured->contents = is_resource($source) ? stream_get_contents($source) : null;
+            $captured->type = $type;
+
+            return true;
+        })
+        ->andReturn(Mockery::mock(ParsedMailContract::class));
+
+    $email->parsedMail();
+
+    // A stream works on any disk; a local filesystem path only on local ones.
+    expect($captured->type)->toBe(Source::Stream)
+        ->and($captured->contents)->toBe('raw message');
+});
+
+it('throws FailedToReadException when the raw message is missing from the disk', function () {
+    $email = Email::fromEnvelope(new Envelope(
+        'envelope-sender@example.com',
+        ['envelope-recipient@example.com'],
+    ));
+    $email->save();
+
+    expect(fn () => $email->parsedMail())
+        ->toThrow(FailedToReadException::class, $email->path());
+});
+
+it('throws FailedToReadException when the disk fails the read', function () {
+    misbehavingStorageDisk(new MisbehavingFilesystemAdapter(failReads: true));
+
+    $email = Email::fromEnvelope(new Envelope(
+        'envelope-sender@example.com',
+        ['envelope-recipient@example.com'],
+    ));
+    $email->save();
+
+    // The write succeeds; only reading it back fails — a remote disk
+    // whose object has gone unreadable, not merely missing.
+    Storage::disk('misbehaving')->put($email->path(), 'raw message');
+
+    expect(fn () => $email->parsedMail())
+        ->toThrow(FailedToReadException::class, $email->path());
 });
 
 it('can check if email was sent to specific address', function () {
@@ -203,6 +264,8 @@ it('can check if email was sent to specific address', function () {
         'message_id' => '<test-id@example.com>',
         'sent_at' => now(),
     ]);
+
+    Storage::disk('local')->put($email->path(), 'raw message');
 
     // Test case sensitivity
     expect($email->wasSentTo('recipient1@example.com'))->toBeTrue()
