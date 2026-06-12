@@ -9,6 +9,7 @@ use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter;
@@ -188,6 +189,35 @@ it('still runs custom filters when built-in filters are also configured', functi
     expect($applyFilters->handle($fakeMail))->toBeFalse();
     Event::assertDispatched(function (EmailRejected $event) use ($customClass) {
         return $event->filterClass === $customClass;
+    });
+});
+
+it('dispatches EmailRejected with a null mail when the rejected message cannot be fully parsed', function () {
+    $rejectingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($rejectingFilter);
+    app()->instance($filterClass, $rejectingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    // The filter rejected on the headers it could read; building the full
+    // Mail payload still fails (say, a missing Message-ID). The reject
+    // verdict must win — never converted into kept Malformed Mail.
+    $fakeMail = ParsedMail::fake([
+        'mail' => fn () => throw MalformedMailException::missingHeader('message-id'),
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse();
+    Event::assertDispatched(function (EmailRejected $event) use ($filterClass) {
+        return $event->filterClass === $filterClass
+            && $event->mail === null;
     });
 });
 

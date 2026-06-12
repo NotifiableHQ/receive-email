@@ -9,6 +9,7 @@ use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter;
 use Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter;
@@ -48,7 +49,16 @@ class ApplyFilters implements PipeFilterContract
                 continue;
             }
 
-            $mail = $parsedMail->toMail();
+            try {
+                $mail = $parsedMail->toMail();
+            } catch (MalformedMailException) {
+                // The filter rejected on the headers it could read; the
+                // rest of the message may still be unparseable. The reject
+                // verdict must win: letting this escape would convert the
+                // Discard into kept Malformed Mail and silently drop
+                // EmailRejected.
+                $mail = null;
+            }
 
             try {
                 event(new EmailRejected($filterClass, $mail));

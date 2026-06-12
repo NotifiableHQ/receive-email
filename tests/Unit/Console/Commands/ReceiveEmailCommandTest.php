@@ -239,6 +239,40 @@ it('discards filter-rejected mail with EX_OK after dispatching EmailRejected', f
     Event::assertNotDispatched(EmailReceived::class);
 });
 
+it('discards filter-rejected mail even when the full Mail payload is unparseable', function () {
+    Event::fake();
+
+    // The filter rejects on a header it can read — the message is not
+    // invisible to it — but the complete Mail payload is not buildable.
+    $failingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($failingFilter);
+    app()->instance($filterClass, $failingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    $fake = recordingParsedMailFake()->fake([
+        'mail' => fn () => throw MalformedMailException::missingHeader('message-id'),
+    ]);
+    ParsedMail::swap($fake);
+
+    $exitCode = runReceiveEmailCommand();
+
+    // The reject verdict wins: Discard (no row, no file) with EmailRejected
+    // dispatched — never kept as Malformed Mail with the verdict dropped.
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and($fake->storedPaths)->toBe([])
+        ->and(Email::query()->count())->toBe(0);
+    Event::assertDispatched(fn (EmailRejected $event) => $event->mail === null);
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+    Event::assertNotDispatched(EmailReceived::class);
+});
+
 it('discards rejected mail with EX_OK even when an EmailRejected listener throws', function () {
     // No Event::fake() here: the throwing listener must actually run.
     Log::spy();

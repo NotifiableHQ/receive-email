@@ -37,7 +37,7 @@ php artisan migrate
 Every delivery the package stores is announced by exactly one of two events, and the split is a contract:
 
 - **`Notifiable\ReceiveEmail\Events\EmailReceived`** — the message parsed successfully. The `Email` row carries the envelope columns *and* the header enrichment (`message_id`, `sent_at`, the `sender` relation, `parsed_at`), and `parsedMail()` gives you the parsed headers and body. This event never fires for Malformed Mail.
-- **`Notifiable\ReceiveEmail\Events\MalformedEmailReceived`** — the message is Malformed Mail: accepted mail whose headers cannot be parsed. It is kept, never lost — the raw message and an envelope-only row are stored — but every enrichment field is `null`, so listeners may rely only on the envelope columns and the raw file. Calling `parsedMail()` still returns a parser over the raw message, but accessors that need a header the message lacks throw `MalformedMailException` — at least one of `id()`, `date()`, or `sender()` always will.
+- **`Notifiable\ReceiveEmail\Events\MalformedEmailReceived`** — the message is Malformed Mail: accepted mail whose headers cannot be parsed, or whose parsed values cannot be stored faithfully (an oversized `Message-ID`, a `Date` outside the storable timestamp range). It is kept, never lost — the raw message and an envelope-only row are stored — but every enrichment field is `null`, so listeners may rely only on the envelope columns and the raw file. Calling `parsedMail()` still returns a parser over the raw message, but accessors that need a header the message lacks throw `MalformedMailException`; for unstorable-value Malformed Mail the accessors succeed — the value simply did not fit its column.
 
 Both events carry the `Email` model as `$event->email` (see [The Email Row](#3-the-email-row)). Mail rejected by a Pipe-time Filter is never stored and dispatches `EmailRejected` instead — see [Rejected and Failed Mail](#rejected-and-failed-mail).
 
@@ -129,7 +129,7 @@ class RejectNoReplyFilter implements EmailFilterContract
 
 Note that `sender()` here is the Header Sender — the forgeable display identity. The trusted Envelope Sender is filtered at SMTP time by the lists above.
 
-When a Pipe-time Filter rejects a message it is Discarded — dropped without ever generating a bounce — and `Notifiable\ReceiveEmail\Events\EmailRejected` is dispatched so your application retains visibility. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. See [Rejected and Failed Mail](#rejected-and-failed-mail).
+When a Pipe-time Filter rejects a message it is Discarded — dropped without ever generating a bounce — and `Notifiable\ReceiveEmail\Events\EmailRejected` is dispatched so your application retains visibility. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. The rejection verdict always wins: a filter only reads the headers it needs, so when the rest of the message turns out unparseable the full `Mail` payload cannot be built — `EmailRejected` still fires, with `$event->mail` `null`. See [Rejected and Failed Mail](#rejected-and-failed-mail).
 
 Pipe-time Filters never see Malformed Mail: a filter that reads a header the message lacks throws, and the message falls through to be kept and announced as `MalformedEmailReceived`. A custom filter is therefore not a barrier against deliberately malformed input — applications that care must also listen for that event.
 
@@ -325,8 +325,8 @@ The server is receive-only: it never sends, relays, or bounces mail. Mail refuse
 
 | Outcome | Exit code | Disposition |
 |---------|-----------|-------------|
-| A Pipe-time Filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the Discard. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. |
-| The message is Malformed Mail (its headers cannot be parsed) | `0` | Kept, never lost. The raw message and an envelope-only row are stored (`parsed_at` stays null) and `MalformedEmailReceived` is dispatched; `EmailReceived` fires only for parsed mail. |
+| A Pipe-time Filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the Discard. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. `$event->mail` is `null` when the rejected message could not be fully parsed. |
+| The message is Malformed Mail (its headers cannot be parsed or stored) | `0` | Kept, never lost. The raw message and an envelope-only row are stored (`parsed_at` stays null) and `MalformedEmailReceived` is dispatched; `EmailReceived` fires only for parsed mail. |
 | The pipe is misconfigured (e.g. `pipe-filter` or `pipe-command` is not a valid class), or the input exceeds `message-size-limit` | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later. |
 | An unexpected failure occurs (database down, disk full, ...) | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later, so transient outages never destroy accepted mail. |
 

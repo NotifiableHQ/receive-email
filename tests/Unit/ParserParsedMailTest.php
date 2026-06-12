@@ -262,6 +262,29 @@ it('throws exception when sender and from headers are missing', function () {
     $this->parsedMail->sender();
 })->throws(MalformedMailException::class);
 
+it('classifies a present but unparsable sender address as Malformed Mail', function () {
+    // mailparse hands garbage From: headers through as-is; the raw text
+    // lands in both keys.
+    $this->parser->shouldReceive('getAddresses')
+        ->once()
+        ->with('sender')
+        ->andReturn([['display' => 'not an address', 'address' => 'not an address']]);
+
+    // MalformedMailException routes to the keep-and-announce flow; the
+    // Address value object's InvalidArgumentException would tempfail-loop
+    // the mail for days.
+    $this->parsedMail->sender();
+})->throws(MalformedMailException::class, 'Sender email address cannot be parsed.');
+
+it('classifies an unparsable recipient address as Malformed Mail', function () {
+    $this->parser->shouldReceive('getAddresses')
+        ->once()
+        ->with('to')
+        ->andReturn([['display' => 'broken', 'address' => 'no-at-sign']]);
+
+    $this->parsedMail->to();
+})->throws(MalformedMailException::class, '[to] header cannot be parsed.');
+
 it('gets subject correctly', function () {
     $subject = 'Test Subject';
 

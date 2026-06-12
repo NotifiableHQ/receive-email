@@ -248,14 +248,19 @@ it('deletes the just-written raw file when the row transaction fails', function 
     Event::assertNotDispatched(MalformedEmailReceived::class);
 });
 
-it('keeps the committed row and raw file when enrichment fails transiently', function () {
-    Event::fake();
+it('withdraws the committed row and raw file when enrichment fails transiently', function () {
+    // Fake only the announcement events: a bare Event::fake() would also
+    // swallow the Eloquent deleted hook that deletes the raw file.
+    Event::fake([EmailReceived::class, MalformedEmailReceived::class]);
+
+    $storedPath = null;
 
     $mockParsedMail = mock(ParsedMailContract::class);
     $mockParsedMail->shouldReceive('id')->andReturn('<enrichment-outage@example.com>');
     $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
     $mockParsedMail->shouldReceive('sender')->andReturn(new Address('sender@example.com', 'Sender'));
-    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function (string $path) {
+    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function (string $path) use (&$storedPath) {
+        $storedPath = $path;
         Storage::disk('local')->put($path, 'raw message');
 
         return true;
@@ -269,17 +274,99 @@ it('keeps the committed row and raw file when enrichment fails transiently', fun
     expect(fn () => (new StoreAndDispatch)->handle($mockParsedMail, new Envelope))
         ->toThrow(QueryException::class);
 
-    // The committed row owns the raw file: a transient enrichment failure
-    // tempfails the pipe without touching either, and the rolled-back
-    // enrichment transaction leaves nothing partial behind. Postfix
-    // redelivers — a duplicate is acceptable, loss is not.
+    // The committed row was never announced: leaving it would strand an
+    // orphan no event ever points at, and the tempfail redelivery would
+    // store a duplicate beside it. Withdrawing the row and its file lets
+    // redelivery re-run ingestion from scratch — exactly one row, exactly
+    // one event, once the failure clears.
+    expect(Email::query()->count())->toBe(0)
+        ->and(Sender::query()->count())->toBe(0)
+        ->and($storedPath)->not->toBeNull();
+
+    Storage::disk('local')->assertMissing($storedPath);
+
+    Event::assertNotDispatched(EmailReceived::class);
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+});
+
+it('keeps mail whose Message-ID exceeds the storable length as Malformed Mail', function () {
+    Event::fake();
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn('<'.str_repeat('a', 300).'@example.com>');
+    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
+    $mockParsedMail->shouldReceive('sender')->andReturn(new Address('sender@example.com', 'Sender'));
+    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function (string $path) {
+        Storage::disk('local')->put($path, 'raw message');
+
+        return true;
+    });
+
+    (new StoreAndDispatch)->handle($mockParsedMail, new Envelope);
+
+    // An oversized value must be classified before the enrichment commit:
+    // a QueryException after the envelope row committed would tempfail a
+    // deterministic failure into Postfix's redelivery loop.
     $email = Email::query()->sole();
 
     expect($email->message_id)->toBeNull()
+        ->and($email->parsed_at)->toBeNull()
         ->and(Sender::query()->count())->toBe(0);
 
     Storage::disk('local')->assertExists($email->path());
 
+    Event::assertDispatched(MalformedEmailReceived::class, fn ($event) => $event->email->is($email));
     Event::assertNotDispatched(EmailReceived::class);
+});
+
+it('keeps mail whose Date header is outside the storable timestamp range as Malformed Mail', function () {
+    Event::fake();
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn('<post-dated@example.com>');
+    // Beyond the MySQL TIMESTAMP range; spam commonly post-dates itself.
+    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::parse('2052-01-01 00:00:00', 'UTC'));
+    $mockParsedMail->shouldReceive('sender')->andReturn(new Address('sender@example.com', 'Sender'));
+    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function (string $path) {
+        Storage::disk('local')->put($path, 'raw message');
+
+        return true;
+    });
+
+    (new StoreAndDispatch)->handle($mockParsedMail, new Envelope);
+
+    $email = Email::query()->sole();
+
+    expect($email->sent_at)->toBeNull()
+        ->and($email->parsed_at)->toBeNull();
+
+    Storage::disk('local')->assertExists($email->path());
+
+    Event::assertDispatched(MalformedEmailReceived::class, fn ($event) => $event->email->is($email));
+    Event::assertNotDispatched(EmailReceived::class);
+});
+
+it('truncates an oversized Header Sender display instead of failing enrichment', function () {
+    Event::fake();
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn('<long-display@example.com>');
+    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
+    $mockParsedMail->shouldReceive('sender')->andReturn(new Address('sender@example.com', str_repeat('D', 300)));
+    $mockParsedMail->shouldReceive('store')->once()->andReturnUsing(function (string $path) {
+        Storage::disk('local')->put($path, 'raw message');
+
+        return true;
+    });
+
+    (new StoreAndDispatch)->handle($mockParsedMail, new Envelope);
+
+    // Display is presentation, not identity: the mail stays parsed.
+    $email = Email::query()->sole();
+
+    expect($email->parsed_at)->not->toBeNull()
+        ->and($email->sender?->display)->toBe(str_repeat('D', 255));
+
+    Event::assertDispatched(EmailReceived::class, fn ($event) => $event->email->is($email));
     Event::assertNotDispatched(MalformedEmailReceived::class);
 });

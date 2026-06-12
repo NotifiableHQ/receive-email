@@ -126,7 +126,14 @@ class ParserParsedMail implements ParsedMailContract
             throw MalformedMailException::missingSender();
         }
 
-        return $this->sender ??= Address::from($sender[0]);
+        try {
+            return $this->sender ??= Address::from($sender[0]);
+        } catch (InvalidArgumentException) {
+            // A sender that is present but not a valid address is Malformed
+            // Mail — kept and announced, never tempfailed into Postfix's
+            // multi-day retry loop (matching date() above).
+            throw MalformedMailException::invalidSender();
+        }
     }
 
     public function subject(): ?string
@@ -139,7 +146,7 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function to(): array
     {
-        return $this->to ??= Address::fromMany($this->parser->getAddresses('to'));
+        return $this->to ??= $this->addresses('to');
     }
 
     /**
@@ -147,7 +154,7 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function cc(): array
     {
-        return $this->cc ??= Address::fromMany($this->parser->getAddresses('cc'));
+        return $this->cc ??= $this->addresses('cc');
     }
 
     /**
@@ -155,7 +162,22 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function bcc(): array
     {
-        return $this->bcc ??= Address::fromMany($this->parser->getAddresses('bcc'));
+        return $this->bcc ??= $this->addresses('bcc');
+    }
+
+    /**
+     * Same classification as sender(): an address header that is present
+     * but unparsable is Malformed Mail, not an InvalidArgumentException.
+     *
+     * @return Address[]
+     */
+    private function addresses(string $header): array
+    {
+        try {
+            return Address::fromMany($this->parser->getAddresses($header));
+        } catch (InvalidArgumentException) {
+            throw MalformedMailException::invalidHeader($header);
+        }
     }
 
     public function recipients(): Recipients

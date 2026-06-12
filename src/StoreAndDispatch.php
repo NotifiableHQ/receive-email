@@ -2,7 +2,9 @@
 
 namespace Notifiable\ReceiveEmail;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
 use Notifiable\ReceiveEmail\Data\Envelope;
@@ -16,6 +18,23 @@ use Throwable;
 
 class StoreAndDispatch implements PipeCommandContract
 {
+    /**
+     * The width of the plain ->string() enrichment columns
+     * (emails.message_id, senders.display). senders.address needs no bound:
+     * Address validates with FILTER_VALIDATE_EMAIL, which enforces the RFC
+     * length limits — well under this.
+     */
+    private const ENRICHMENT_STRING_LENGTH = 255;
+
+    /**
+     * The MySQL TIMESTAMP range — the narrowest among the supported
+     * drivers. A forged Date outside it (spam commonly post-dates itself)
+     * would fail the enrichment commit on MySQL.
+     */
+    private const SENT_AT_MIN = '1970-01-01 00:00:01';
+
+    private const SENT_AT_MAX = '2038-01-19 03:14:07';
+
     public function handle(ParsedMailContract $parsedMail, Envelope $envelope): void
     {
         $email = Email::fromEnvelope($envelope);
@@ -46,6 +65,17 @@ class StoreAndDispatch implements PipeCommandContract
             event(new MalformedEmailReceived($email));
 
             return;
+        } catch (Throwable $exception) {
+            // The committed row was never announced, and a bare tempfail
+            // would have Postfix redeliver into a fresh ULID: an orphan row
+            // no event ever points at, plus a duplicate. Withdraw the row
+            // and its file, then tempfail — redelivery re-runs ingestion
+            // from scratch. Only transient failures reach here: every value
+            // the enrichment commit writes is validated against its column
+            // before the transaction opens.
+            $this->withdraw($email);
+
+            throw $exception;
         }
 
         event(new EmailReceived($email));
@@ -53,9 +83,9 @@ class StoreAndDispatch implements PipeCommandContract
 
     /**
      * Best-effort header enrichment of the committed row. Every header is
-     * read before the transaction opens, so a MalformedMailException can
-     * never leave partial enrichment behind. The committed row owns the raw
-     * file: an enrichment failure rethrows without touching either.
+     * read and validated against its column before the transaction opens,
+     * so a MalformedMailException can never leave partial enrichment behind
+     * and the commit itself can only fail transiently.
      */
     private function enrich(Email $email, ParsedMailContract $parsedMail): void
     {
@@ -63,11 +93,27 @@ class StoreAndDispatch implements PipeCommandContract
         $sentAt = $parsedMail->date();
         $headerSender = $parsedMail->sender();
 
-        DB::transaction(function () use ($email, $messageId, $sentAt, $headerSender) {
+        if (mb_strlen($messageId) > self::ENRICHMENT_STRING_LENGTH) {
+            // The ULID is the identity and message_id is annotation, but a
+            // truncated annotation would silently collide lookups: an
+            // oversized Message-ID is Malformed Mail instead.
+            throw MalformedMailException::oversizedHeader('message-id');
+        }
+
+        if ($sentAt->lt(CarbonImmutable::parse(self::SENT_AT_MIN, 'UTC'))
+            || $sentAt->gt(CarbonImmutable::parse(self::SENT_AT_MAX, 'UTC'))) {
+            throw MalformedMailException::unstorableDate();
+        }
+
+        // Display is presentation, not identity: truncating it keeps an
+        // otherwise-parseable message parsed.
+        $display = mb_substr($headerSender->display, 0, self::ENRICHMENT_STRING_LENGTH);
+
+        DB::transaction(function () use ($email, $messageId, $sentAt, $headerSender, $display) {
             /** @var Sender $sender */
             $sender = Sender::query()->updateOrCreate(
                 ['address' => mb_strtolower($headerSender->address)],
-                ['display' => $headerSender->display],
+                ['display' => $display],
             );
 
             $email->sender()->associate($sender);
@@ -78,5 +124,25 @@ class StoreAndDispatch implements PipeCommandContract
                 'parsed_at' => now(),
             ])->save();
         });
+    }
+
+    /**
+     * Deleting the row also deletes its raw file (the Email deleted hook).
+     * Withdrawal is best-effort: if the database just died, this delete
+     * fails too and the orphan row survives unannounced until an operator
+     * reconciles — the log line makes it findable. The original failure
+     * still tempfails either way.
+     */
+    private function withdraw(Email $email): void
+    {
+        try {
+            $email->delete();
+        } catch (Throwable $exception) {
+            Log::error('Failed to withdraw the Email row after an enrichment failure; the row was never announced by an event.', [
+                'ulid' => $email->ulid,
+                'path' => $email->path(),
+                'exception' => $exception,
+            ]);
+        }
     }
 }
