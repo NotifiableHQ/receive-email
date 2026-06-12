@@ -34,7 +34,12 @@ php artisan migrate
 
 ### 2. Listen for Incoming Emails
 
-Whenever an email is received and parsed, the package will dispatch the `Notifiable\\ReceiveEmail\\Events\\EmailReceived` event. Accepted mail whose headers cannot be parsed is still kept — raw message and envelope row — and announced as `Notifiable\\ReceiveEmail\\Events\\MalformedEmailReceived` instead (same shape, carrying the `Email` model). On Laravel 11 and above, you should use a listener class:
+Every delivery the package stores is announced by exactly one of two events, and the split is a contract:
+
+- **`Notifiable\ReceiveEmail\Events\EmailReceived`** — the message parsed successfully. The `Email` row carries the envelope columns *and* the header enrichment (`message_id`, `sent_at`, the `sender` relation, `parsed_at`), and `parsedMail()` gives you the parsed headers and body. This event never fires for Malformed Mail.
+- **`Notifiable\ReceiveEmail\Events\MalformedEmailReceived`** — the message is Malformed Mail: accepted mail whose headers cannot be parsed. It is kept, never lost — the raw message and an envelope-only row are stored — but every enrichment field is `null`, so listeners may rely only on the envelope columns and the raw file. Calling `parsedMail()` still returns a parser over the raw message, but accessors that need a header the message lacks throw `MalformedMailException` — at least one of `id()`, `date()`, or `sender()` always will.
+
+Both events carry the `Email` model as `$event->email` (see [The Email Row](#3-the-email-row)). Mail rejected by a Pipe-time Filter is never stored and dispatches `EmailRejected` instead — see [Rejected and Failed Mail](#rejected-and-failed-mail).
 
 #### Create the Listener
 
@@ -62,9 +67,34 @@ class HandleIncomingEmail
 }
 ```
 
-### 3. Accessing Email Data
+### 3. The Email Row
 
-The `Email` model gives you access to sender, recipients, subject, and body through the `parsedMail` method. Example:
+Each accepted delivery stores exactly one row, identified by its ULID. Rows are message-scoped: a delivery to several recipients is still one row. The columns come in two layers.
+
+**Envelope columns** — recorded from the SMTP envelope at delivery time, on every row:
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `envelope_sender` | `string\|null` | The Envelope Sender (SMTP `MAIL FROM`) — the trusted identity, the one SPF verifies. `null` means the null Envelope Sender (`MAIL FROM:<>`: remote bounces and delivery status notifications), never a placeholder address. |
+| `envelope_recipients` | `array` | Every Envelope Recipient (SMTP `RCPT TO`) of the delivery — the actual delivery targets, independent of the `To:`/`Cc:` headers. |
+| `client_address` | `string\|null` | The IP address of the client that delivered the message. |
+| `queue_id` | `string\|null` | The Postfix queue ID of the delivery. |
+
+**Enrichment columns** — extracted from the message headers after the row exists; best-effort and nullable. All of them are `null` for Malformed Mail:
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `message_id` | `string\|null` | The `Message-ID` header. Indexed but **not unique** — see below. |
+| `sender` (relation) | `Sender\|null` | The Header Sender (`Sender:` header, falling back to `From:`) — the display identity a human sees in a mail client, and trivially forgeable. The trusted identity is `envelope_sender`. |
+| `sent_at` | `CarbonImmutable\|null` | The `Date` header. |
+| `parsed_at` | `CarbonImmutable\|null` | When header parsing succeeded. `parsed_at === null` on a stored row *is* Malformed Mail. |
+
+Two consequences worth internalizing:
+
+- **The ULID is the identity; `Message-ID` is annotation.** Message-IDs are chosen by the sending system and legitimately duplicate: the same newsletter sent to two of your addresses arrives as two deliveries sharing one `Message-ID`, and stores as two rows. Deduplication, if your application wants it, is application policy — the envelope columns give you the context to decide with.
+- **Header recipients and Envelope Recipients differ.** `parsedMail()->recipients()` reads the `To:`/`Cc:`/`Bcc:` headers — what a human sees; `envelope_recipients` records where the message was actually delivered. A message BCC'd to your domain reaches it via `RCPT TO` while its headers never mention it.
+
+The parsed message itself is available through `parsedMail()`, which re-reads the raw file from the storage disk on every call (see [Raw message storage](#raw-message-storage)):
 
 ```php
 /** @var \Notifiable\ReceiveEmail\Contracts\ParsedMailContract $mail */
@@ -97,7 +127,13 @@ class RejectNoReplyFilter implements EmailFilterContract
 }
 ```
 
-When a pipe-time filter rejects a message it is discarded — never bounced — and `Notifiable\ReceiveEmail\Events\EmailRejected` is dispatched so your application retains visibility. See [Rejected and Failed Mail](#rejected-and-failed-mail).
+Note that `sender()` here is the Header Sender — the forgeable display identity. The trusted Envelope Sender is filtered at SMTP time by the lists above.
+
+When a Pipe-time Filter rejects a message it is Discarded — dropped without ever generating a bounce — and `Notifiable\ReceiveEmail\Events\EmailRejected` is dispatched so your application retains visibility. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. See [Rejected and Failed Mail](#rejected-and-failed-mail).
+
+Pipe-time Filters never see Malformed Mail: a filter that reads a header the message lacks throws, and the message falls through to be kept and announced as `MalformedEmailReceived`. A custom filter is therefore not a barrier against deliberately malformed input — applications that care must also listen for that event.
+
+Both tools key on sender identity — the Envelope Sender at SMTP time, parsed headers at pipe time. There is deliberately no recipient-level filtering: every recipient at the receiving domain is accepted, and recipient policy belongs in your application — see [The Catch-all Recipient Contract](#the-catch-all-recipient-contract).
 
 ## Forge Deployment
 1. Add this to your recipes, you can name it `Install Mailparse`. Make sure the user is `root`.
@@ -195,11 +231,23 @@ The `sender-domain-whitelist`, `sender-domain-blacklist`, `sender-address-whitel
 sudo php artisan notifiable:sync-postfix --isolated
 ```
 
-When any whitelist has entries, the server rejects every sender not present in a whitelist. With only blacklists, listed senders are rejected and everyone else is accepted; a blacklisted sender is rejected even when a whitelist would also match it. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code (the [mail-log importer](#observing-smtp-time-rejections) closes that visibility gap).
+When any whitelist has entries, the server rejects every Envelope Sender not present in a whitelist. With only blacklists, listed Envelope Senders are rejected and everyone else is accepted; a blacklisted entry wins even when a whitelist would also match it. Rejected mail is refused during the SMTP transaction with a 5xx response — the sending server is responsible for notifying its sender, and the rejection never reaches your application code (the [mail-log importer](#observing-smtp-time-rejections) closes that visibility gap).
 
 Domain list entries match subdomains too: Postfix's default [`parent_domain_matches_subdomains`](https://www.postfix.org/postconf.5.html#parent_domain_matches_subdomains) setting includes the sender access maps, so a `sender-domain-blacklist` entry `example.com` also rejects mail whose Envelope Sender is `user@sub.example.com`, and a whitelisted `example.com` likewise accepts mail from all of its subdomains. There is no way to match a domain *without* its subdomains under this default; listing a subdomain (`sub.example.com`) scopes the match to that subdomain and anything beneath it. Address entries (`user@example.com`) are always exact.
 
-Whitelist mode always exempts the null Envelope Sender: the rendered whitelist map contains a `<>` entry (Postfix's `smtpd_null_access_lookup_key`), so `MAIL FROM:<>` — remote bounces and delivery status notifications addressed to your domain — is accepted even though it appears in no whitelist, as RFC 5321 requires. Blacklist-only configurations never reject unlisted senders, so they need (and get) no exemption. Mail accepted through this exemption still passes through your Pipe-time Filters, where it can be discarded if unwanted.
+Whitelist mode always exempts the null Envelope Sender: the rendered whitelist map contains a `<>` entry (Postfix's `smtpd_null_access_lookup_key`), so `MAIL FROM:<>` — remote bounces and delivery status notifications addressed to your domain — is accepted even though it appears in no whitelist, as RFC 5321 requires. Blacklist-only configurations never reject unlisted Envelope Senders, so they need (and get) no exemption. Mail accepted through this exemption still passes through your Pipe-time Filters, where it can be Discarded if unwanted.
+
+## The Catch-all Recipient Contract
+
+The server accepts mail for **every recipient at the receiving domain**. Setup clears Postfix's `local_recipient_maps`, so no address under your domain is ever refused for being unknown: `anything@your-domain.com` is accepted, piped in, and stored. (The standard SMTP sanity checks still apply — recipients must be fully qualified, at a resolvable domain, and at *your* domain; the server never relays.)
+
+This is a deliberate v1 contract, not a missing feature:
+
+- **Recipient-level policy is application work.** Every Email row stores its Envelope Recipients (see [The Email Row](#3-the-email-row)); decide what an address means — route it, ignore it, delete the row — in your `EmailReceived`/`MalformedEmailReceived` listeners, or Discard unwanted mail with a Pipe-time Filter.
+- **Static recipient maps were rejected.** A Postfix-side table of valid recipients would have to be synced from the application, and any staleness window means the server refuses legitimate mail with a permanent 550: an address your application just created would bounce its first replies until the next sync. Permanently destroying legitimate mail is the one failure this package is designed never to allow.
+- **SMTP-time dynamic recipient validation is deliberately post-v1.** Refusing unknown recipients during the SMTP transaction — a Postfix policy service querying the application in real time — only makes sense designed against your application's actual address scheme, so v1 does not attempt it.
+
+The cost of the contract: mail to nonexistent recipients (typos, dictionary spam) is accepted and stored rather than refused at SMTP time. If volume matters, clean up unwanted rows from your listeners — deleting an `Email` also deletes its raw file.
 
 ## Observing SMTP-time Rejections
 
@@ -247,7 +295,7 @@ class RecordSmtpRejection
         $rejection->timestamp;      // CarbonImmutable
         $rejection->clientHost;     // string|null — null when the line only carries an IP
         $rejection->clientIp;       // string
-        $rejection->envelopeSender; // string|null — '' is the null sender, null when absent from the line
+        $rejection->envelopeSender; // string|null — '' is the null Envelope Sender, null when absent from the line
         $rejection->recipient;      // string|null
         $rejection->rejectionClass; // RejectionClass: EnvelopeList, Spf, Helo, RateLimit, Postscreen, Other
         $rejection->rawLine;        // string — the raw log line
@@ -277,40 +325,62 @@ The server is receive-only: it never sends, relays, or bounces mail. Mail refuse
 
 | Outcome | Exit code | Disposition |
 |---------|-----------|-------------|
-| A pipe-time filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the discard. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. |
-| The message is malformed (its headers cannot be parsed) | `0` | Kept, never lost. The raw message and an envelope-only row are stored (`parsed_at` stays null) and `MalformedEmailReceived` is dispatched; `EmailReceived` fires only for parsed mail. |
+| A Pipe-time Filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the Discard. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. |
+| The message is Malformed Mail (its headers cannot be parsed) | `0` | Kept, never lost. The raw message and an envelope-only row are stored (`parsed_at` stays null) and `MalformedEmailReceived` is dispatched; `EmailReceived` fires only for parsed mail. |
 | The pipe is misconfigured (e.g. `pipe-filter` or `pipe-command` is not a valid class), or the input exceeds `message-size-limit` | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later. |
 | An unexpected failure occurs (database down, disk full, ...) | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later, so transient outages never destroy accepted mail. |
 
-Exiting `EX_TEMPFAIL` for misconfiguration and oversize input is deliberate, even though those conditions look permanent: tempfail is the mail-preserving choice. Both are operator-fixable — correct the config (or reconcile `message-size-limit` with Postfix's `message_size_limit`, which normally stops oversize mail at SMTP time) and everything that queued up in the meantime delivers successfully. Any other exit would either discard real mail or ask for a bounce this server can never send.
+Exiting `EX_TEMPFAIL` for misconfiguration and oversize input is deliberate, even though those conditions look permanent: tempfail is the mail-preserving choice. Both are operator-fixable — correct the config (or reconcile `message-size-limit` with Postfix's `message_size_limit`, which normally stops oversize mail at SMTP time) and everything that queued up in the meantime delivers successfully. Any other exit would either destroy real mail or ask for a bounce this server can never send.
 
 ## Upgrading to v1
 
-The v1 hardening wave changes behavior you may rely on. The decisions behind these changes are recorded in `docs/adr/`.
+v1 changes behavior you may rely on; every subsection below is a breaking change. The decisions behind them are recorded in `docs/adr/`. In short: rejection moved to SMTP time and the server never bounces (ADR-0001), and ingestion became raw-first — the SMTP envelope is the row's identity, parsed headers are nullable enrichment, and Malformed Mail is kept instead of dropped (ADR-0003).
 
-### Sender lists now match the Envelope Sender (breaking)
+### Sender lists now match the Envelope Sender
 
 The `sender-domain-whitelist`, `sender-domain-blacklist`, `sender-address-whitelist`, and `sender-address-blacklist` config lists previously matched the Header Sender (the `Sender:`/`From:` header) in PHP after the mail was accepted. They now match the Envelope Sender (the SMTP `MAIL FROM` address) before acceptance, and the built-in filter classes are no longer evaluated pipe-time (custom `EmailFilterContract` filters still run).
 
-Where the two identities diverge — common for ESP-sent mail, e.g. header `From: alerts@stripe.com` with envelope sender `bounces@em5678.stripe.com` — the lists now apply to the envelope side, so whitelist the envelope domain (`em5678.stripe.com`), not the header domain (`stripe.com`). Review your lists against the actual envelope senders of mail you expect; the `SmtpRejectionObserved` event reports the envelope sender of anything being rejected.
+Where the two identities diverge — common for ESP-sent mail, e.g. header `From: alerts@stripe.com` with Envelope Sender `bounces@em5678.stripe.com` — the lists now apply to the envelope side, so whitelist the envelope domain (`em5678.stripe.com`), not the header domain (`stripe.com`). Review your lists against the actual Envelope Senders of mail you expect; the `SmtpRejectionObserved` event reports the Envelope Sender of anything being rejected.
 
 Domain entries also gained subdomain matching: the previous PHP filters compared the domain exactly, while Postfix access maps under the default [`parent_domain_matches_subdomains`](https://www.postfix.org/postconf.5.html#parent_domain_matches_subdomains) setting match the domain itself **and every subdomain** — a `sender-domain-blacklist` entry `example.com` now also rejects `user@sub.example.com`, and a whitelisted domain now admits all of its subdomains. Audit your domain entries (whitelist entries especially) for subdomains you do not intend to cover; see [Envelope Sender filtering](#envelope-sender-filtering).
 
 After changing the lists, run `sudo php artisan notifiable:sync-postfix` to compile them into the Postfix access maps (the setup command does this once; deploys should re-run it — see [Forge Deployment](#forge-deployment)).
 
-### SPF verification is now the default (breaking)
+### SPF verification is now the default
 
 The `--with-spf` opt-in flag is gone: `notifiable:setup-postfix` now installs and configures SPF verification by default, because SPF is what makes the Envelope Sender trustworthy enough to filter on. Pass `--without-spf` to opt out. Inbound mail failing SPF is rejected at SMTP time; watch for `RejectionClass::Spf` via the importer if you need visibility.
 
-### Pipe exit codes changed: rejected mail is discarded, not bounced
+### Rejected mail is Discarded, never bounced
 
-The pipe command previously exited `EX_NOHOST` for filtered mail, asking Postfix to bounce — impossible on a server that cannot send, so it produced queue churn and double-bounces. Now:
+The pipe command previously exited `EX_NOHOST` for filtered mail, asking Postfix to bounce — impossible on a server that cannot send, so it produced queue churn and double-bounces. Mail rejected by a Pipe-time Filter now exits `0`: the message is Discarded, `EmailRejected` is dispatched, and no bounce is requested. Transient failures (database down, disk full) exit `75` (`EX_TEMPFAIL`), so Postfix keeps the message queued and retries instead of destroying accepted mail.
 
-- Filtered mail exits `0`: the message is Discarded, `EmailRejected` is dispatched, and no bounce is requested.
-- Malformed mail also exits `0`, but is kept rather than discarded: the raw message and an envelope-only row are stored and `MalformedEmailReceived` is dispatched (see ADR-0003).
-- Transient failures (database down, disk full) exit `75` (`EX_TEMPFAIL`): Postfix keeps the message queued and retries.
+If you monitored pipe failures via Postfix bounce activity, switch to listening for `EmailRejected` and `SmtpRejectionObserved` instead. The full exit-code table is in [Rejected and Failed Mail](#rejected-and-failed-mail); Malformed Mail also exits `0` but is *kept*, not Discarded — see [Malformed Mail is kept and announced](#malformed-mail-is-kept-and-announced-not-discarded) below.
 
-If you monitored pipe failures via Postfix bounce activity, switch to listening for `EmailRejected` and `SmtpRejectionObserved` instead.
+### The emails schema is reshaped: identity from the envelope
+
+The ULID is now the only row identity; everything header-derived is nullable enrichment (see [The Email Row](#3-the-email-row)):
+
+- New columns: `envelope_sender` (nullable), `envelope_recipients` (JSON array), `client_address` (nullable), `queue_id` (nullable), and `parsed_at` (nullable timestamp).
+- `message_id` and `sent_at` are now nullable, and `message_id` traded its `UNIQUE` constraint for a plain index. A forged or legitimately duplicate Message-ID can no longer send a second delivery into a multi-day tempfail loop; if you relied on the constraint for deduplication, that is now application policy.
+- The `sender_ulid` foreign key is now nullable with `nullOnDelete`: deleting a `Sender` preserves its emails and their raw files. (The old `cascadeOnDelete` removed rows at the database layer, bypassing the Eloquent hook that deletes raw files — orphaned files on disk.)
+
+The package ships create-only migrations, reshaped in place for v1 — there is no upgrade migration. A fresh install just migrates; an existing install must apply the deltas above with its own `ALTER TABLE` migration.
+
+### The pipe command now receives the SMTP envelope
+
+Two coupled changes:
+
+- **Re-run setup.** The Postfix transport entry gained the envelope macros (`${sender} ${client_address} ${queue_id} ${recipient}`) and an empty `null_sender=` attribute, so the null Envelope Sender (`MAIL FROM:<>`, DSNs) stores as `null` — never as the literal `MAILER-DAEMON`. Until you re-run `sudo php artisan notifiable:setup-postfix`, the pipe receives no envelope data and the envelope columns stay empty (`null`, or `[]` for `envelope_recipients`).
+- **`PipeCommandContract` changed.** `handle()` now receives the envelope alongside the parsed mail: `handle(ParsedMailContract $parsedMail, Envelope $envelope): void`. A custom pipe command must add the parameter; the default `StoreAndDispatch` records all four envelope fields on the row.
+
+Rows are message-scoped: `destination_recipient_limit` is deliberately not set, so one delivery stores every Envelope Recipient on one row.
+
+### Malformed Mail is kept and announced, not discarded
+
+Accepted mail whose headers cannot be parsed was previously dropped with only a log line — accepted-then-vanished mail. It is now kept, never lost: the raw message and an envelope-only row are stored (`parsed_at` stays `null`) and the new `MalformedEmailReceived` event is dispatched. The raw file is also written — and checked: a `false` write throws `FailedToStoreException` — *before* the row commits, so a row can never exist without its file. Adjust expectations on both sides:
+
+- `EmailReceived` keeps its parseable-mail contract and never fires for Malformed Mail. If your application must see *all* accepted mail, listen for both events — see [Listen for Incoming Emails](#2-listen-for-incoming-emails).
+- Custom `EmailFilterContract` filters no longer see mail that turns out malformed: a filter touching an unparseable header lets the message fall through to be kept and announced. A Pipe-time Filter is not a barrier against deliberately malformed input.
 
 ### Platform requirements are now enforced
 
