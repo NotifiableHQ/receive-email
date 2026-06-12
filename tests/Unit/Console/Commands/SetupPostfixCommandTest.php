@@ -348,7 +348,7 @@ describe('postscreen topology', function () {
         Process::assertRan("postconf -M 'tlsproxy/unix=tlsproxy unix - - - - 0 tlsproxy'");
         Process::assertRan("postconf -e 'postscreen_greet_action = enforce'");
 
-        expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy argv=');
+        expect($this->postconf->services['notifiable/unix'])->toContain('user=deploy null_sender= argv=');
     });
 
     it('skips a master.cf write when the column-aligned entry already matches', function () {
@@ -373,6 +373,49 @@ describe('postscreen topology', function () {
         Process::assertRanTimes(
             fn (PendingProcess $process) => str_starts_with($process->command, "postconf -M 'notifiable/unix="),
             1
+        );
+    });
+});
+
+describe('envelope capture', function () {
+    it('writes the pipe transport with the envelope macros and the empty null_sender attribute', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        $transport = $this->postconf->services['notifiable/unix'];
+
+        // null_sender= (empty) hands MAIL FROM:<> to the pipe as an empty
+        // string, never the literal MAILER-DAEMON Postfix substitutes by
+        // default, so the null Envelope Sender can store as null.
+        expect($transport)
+            ->toContain(' null_sender= argv=')
+            ->toEndWith('notifiable:receive-email ${sender} ${client_address} ${queue_id} ${recipient}');
+    });
+
+    it('keeps the pipe transport write idempotent across re-runs', function () {
+        $arguments = ['domain' => 'example.com', '--user' => 'deploy'];
+
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+        $this->artisan('notifiable:setup-postfix', $arguments)->assertSuccessful();
+
+        Process::assertRanTimes(
+            fn (PendingProcess $process) => str_starts_with($process->command, "postconf -M 'notifiable/unix="),
+            1
+        );
+
+        expect($this->postconf->services['notifiable/unix'])
+            ->toContain(' null_sender= argv=')
+            ->toEndWith('${sender} ${client_address} ${queue_id} ${recipient}');
+    });
+
+    it('leaves rows message-scoped: no destination_recipient_limit is written', function () {
+        $this->artisan('notifiable:setup-postfix', ['domain' => 'example.com', '--user' => 'deploy'])
+            ->assertSuccessful();
+
+        // One delivery = one row carrying every Envelope Recipient;
+        // destination_recipient_limit = 1 would split it per recipient.
+        Process::assertDidntRun(
+            fn (PendingProcess $process) => str_contains($process->command, 'destination_recipient_limit')
         );
     });
 });

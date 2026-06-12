@@ -6,13 +6,14 @@ use Exception;
 use Illuminate\Support\Facades\DB;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
 
 class StoreAndDispatch implements PipeCommandContract
 {
-    public function handle(ParsedMailContract $parsedMail): void
+    public function handle(ParsedMailContract $parsedMail, Envelope $envelope): void
     {
         $email = null;
 
@@ -27,6 +28,10 @@ class StoreAndDispatch implements PipeCommandContract
 
             /** @var Email $email */
             $email = $sender->emails()->create([
+                'envelope_sender' => $envelope->sender,
+                'envelope_recipients' => $envelope->recipients,
+                'client_address' => $envelope->clientAddress,
+                'queue_id' => $envelope->queueId,
                 'message_id' => $parsedMail->id(),
                 'sent_at' => $parsedMail->date(),
             ]);

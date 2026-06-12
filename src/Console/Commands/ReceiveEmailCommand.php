@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
 use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeCommandException;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeFilterException;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
@@ -21,7 +22,11 @@ class ReceiveEmailCommand extends Command
     public const EX_TEMPFAIL = 75;
 
     /** @var string */
-    protected $signature = 'notifiable:receive-email';
+    protected $signature = 'notifiable:receive-email
+        {sender? : The Envelope Sender (SMTP MAIL FROM); empty for the null sender (MAIL FROM:<>).}
+        {client_address? : The IP address of the client that delivered the message.}
+        {queue_id? : The Postfix queue ID of the delivery.}
+        {recipient?* : The Envelope Recipients (SMTP RCPT TO) of the delivery.}';
 
     /** @var string */
     protected $description = 'Receive an email.';
@@ -97,9 +102,31 @@ class ReceiveEmailCommand extends Command
             throw InvalidPipeCommandException::invalidClass(config('receive_email.pipe-command'));
         }
 
-        $pipeCommand->handle($parsedMail);
+        $pipeCommand->handle($parsedMail, $this->envelope());
 
         return self::EX_OK;
+    }
+
+    /**
+     * Bundle the envelope macros Postfix appends to the pipe's argv. The
+     * Envelope normalizes the empty strings Postfix passes for unavailable
+     * macros and for the null Envelope Sender (MAIL FROM:<>).
+     */
+    private function envelope(): Envelope
+    {
+        /** @var string|null $sender */
+        $sender = $this->argument('sender');
+
+        /** @var string|null $clientAddress */
+        $clientAddress = $this->argument('client_address');
+
+        /** @var string|null $queueId */
+        $queueId = $this->argument('queue_id');
+
+        /** @var string[] $recipients */
+        $recipients = $this->argument('recipient');
+
+        return new Envelope($sender, $recipients, $clientAddress, $queueId);
     }
 
     /**

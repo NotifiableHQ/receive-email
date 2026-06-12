@@ -98,7 +98,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | When Postfix receives an email this pipe command is executed, given
-    | the parsed mail. Here you may customize the processing.
+    | the parsed mail and its SMTP envelope. Here you may customize the
+    | processing.
     |
     */
 

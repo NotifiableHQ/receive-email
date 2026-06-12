@@ -7,19 +7,24 @@ use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmailCommand;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Support\Testing\FakeParsedMail;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
 
 /**
- * Run the command against an in-memory input stream instead of php://stdin.
+ * Run the command against an in-memory input stream instead of php://stdin,
+ * with $arguments standing in for the envelope argv Postfix appends.
+ *
+ * @param  array<string, string|string[]>  $arguments
  */
-function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello"): int
+function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello", array $arguments = []): int
 {
     $stream = fopen('php://memory', 'r+');
 
@@ -46,7 +51,7 @@ function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello"): i
 
     $command->setLaravel(app());
 
-    return $command->run(new ArrayInput([]), new NullOutput);
+    return $command->run(new ArrayInput($arguments), new NullOutput);
 }
 
 /**
@@ -96,6 +101,78 @@ it('passes the full input through to the parser unchanged', function () {
     expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
         ->and($fake->sourceContents)->toBe($input);
     Event::assertDispatched(EmailReceived::class);
+});
+
+it('records the envelope handed to the pipe as argv arguments on the Email row', function () {
+    Event::fake();
+
+    ParsedMail::fake([
+        'stored' => true,
+        'to' => [['address' => 'header-to@example.com', 'display' => 'Header To']],
+    ]);
+
+    $exitCode = runReceiveEmailCommand(arguments: [
+        'sender' => 'envelope-sender@example.com',
+        'client_address' => '203.0.113.7',
+        'queue_id' => '4cVqkW1lq8z2Xw1',
+        'recipient' => ['envelope-recipient@example.com'],
+    ]);
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+
+    $email = Email::query()->sole();
+
+    expect($email->envelope_sender)->toBe('envelope-sender@example.com')
+        ->and($email->envelope_recipients)->toBe(['envelope-recipient@example.com'])
+        ->and($email->client_address)->toBe('203.0.113.7')
+        ->and($email->queue_id)->toBe('4cVqkW1lq8z2Xw1');
+
+    Event::assertDispatched(EmailReceived::class);
+});
+
+it('stores a null Envelope Sender for MAIL FROM:<>', function () {
+    Event::fake();
+
+    ParsedMail::fake([
+        'stored' => true,
+        'to' => [['address' => 'header-to@example.com', 'display' => 'Header To']],
+    ]);
+
+    // The pipe's null_sender= attribute passes MAIL FROM:<> as an empty
+    // argv string; the row must carry null, never a literal address.
+    $exitCode = runReceiveEmailCommand(arguments: [
+        'sender' => '',
+        'client_address' => '203.0.113.7',
+        'queue_id' => '4cVqkW1lq8z2Xw1',
+        'recipient' => ['envelope-recipient@example.com'],
+    ]);
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and(Email::query()->sole()->envelope_sender)->toBeNull();
+});
+
+it('stores every Envelope Recipient of a multi-recipient delivery on one row', function () {
+    Event::fake();
+
+    ParsedMail::fake([
+        'stored' => true,
+        'to' => [['address' => 'header-to@example.com', 'display' => 'Header To']],
+    ]);
+
+    // ${recipient} expands to one argv argument per Envelope Recipient;
+    // message-scoped rows keep one delivery = one row with all of them.
+    $exitCode = runReceiveEmailCommand(arguments: [
+        'sender' => 'envelope-sender@example.com',
+        'client_address' => '203.0.113.7',
+        'queue_id' => '4cVqkW1lq8z2Xw1',
+        'recipient' => ['one@example.com', 'two@example.com', 'three@example.com'],
+    ]);
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+
+    // sole() doubles as the one-row assertion.
+    expect(Email::query()->sole()->envelope_recipients)
+        ->toBe(['one@example.com', 'two@example.com', 'three@example.com']);
 });
 
 it('discards filter-rejected mail with EX_OK after dispatching EmailRejected', function () {
@@ -215,7 +292,7 @@ it('exits EX_TEMPFAIL when the pipe command fails unexpectedly', function () {
     // Create a mock pipe command that fails like a transient outage would
     $failingPipeCommand = new class implements PipeCommandContract
     {
-        public function handle(ParsedMailContract $parsedMail): void
+        public function handle(ParsedMailContract $parsedMail, Envelope $envelope): void
         {
             throw new RuntimeException('Database is down.');
         }

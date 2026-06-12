@@ -260,7 +260,11 @@ class SetupPostfixCommand extends ConsoleCommand
         $command = $this->getReceiveEmailCommand();
         $concurrency = config('receive_email.pipe-concurrency', 4);
 
-        $this->setMasterService('notifiable/unix', "notifiable unix - n n - {$concurrency} pipe flags=F user={$user} argv={$command}");
+        // null_sender= (empty) passes the null Envelope Sender
+        // (MAIL FROM:<>, DSNs) through the ${sender} macro as an empty
+        // string, so it stores as null — never the literal MAILER-DAEMON
+        // Postfix substitutes by default.
+        $this->setMasterService('notifiable/unix', "notifiable unix - n n - {$concurrency} pipe flags=F user={$user} null_sender= argv={$command}");
     }
 
     /**
@@ -491,6 +495,10 @@ class SetupPostfixCommand extends ConsoleCommand
         // always calls the active release after future deploys.
         $basePath = preg_replace('#/releases/[^/]+$#', '/current', $basePath);
 
-        return "php {$basePath}/artisan notifiable:receive-email";
+        // The macros hand the pipe the SMTP envelope as argv arguments.
+        // ${recipient} expands to every Envelope Recipient of the delivery
+        // (message-scoped by decision: no destination_recipient_limit, one
+        // delivery = one row carrying all of them).
+        return "php {$basePath}/artisan notifiable:receive-email \${sender} \${client_address} \${queue_id} \${recipient}";
     }
 }

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
@@ -35,7 +36,7 @@ it('stores incoming email and dispatches event', function () {
 
     // Execute
     $storeAndDispatch = new StoreAndDispatch;
-    $storeAndDispatch->handle($mockParsedMail);
+    $storeAndDispatch->handle($mockParsedMail, new Envelope);
 
     // Assert
     $this->assertDatabaseHas('senders', [
@@ -69,12 +70,38 @@ it('stores two deliveries bearing the same Message-ID', function () {
     $mockParsedMail->shouldReceive('store')->andReturn(true);
 
     $storeAndDispatch = new StoreAndDispatch;
-    $storeAndDispatch->handle($mockParsedMail);
-    $storeAndDispatch->handle($mockParsedMail);
+    $storeAndDispatch->handle($mockParsedMail, new Envelope);
+    $storeAndDispatch->handle($mockParsedMail, new Envelope);
 
     expect(Email::where('message_id', $messageId)->count())->toBe(2);
 
     Event::assertDispatchedTimes(EmailReceived::class, 2);
+});
+
+it('records the envelope on the Email row', function () {
+    Event::fake();
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn('<envelope-test@example.com>');
+    $mockParsedMail->shouldReceive('date')->andReturn(CarbonImmutable::now());
+    $mockParsedMail->shouldReceive('sender')->andReturn(new Address('header-sender@example.com', 'Header Sender'));
+    $mockParsedMail->shouldReceive('store')->andReturn(true);
+
+    $envelope = new Envelope(
+        'envelope-sender@example.com',
+        ['one@example.com', 'two@example.com'],
+        '203.0.113.7',
+        '4cVqkW1lq8z2Xw1',
+    );
+
+    (new StoreAndDispatch)->handle($mockParsedMail, $envelope);
+
+    $email = Email::query()->sole();
+
+    expect($email->envelope_sender)->toBe('envelope-sender@example.com')
+        ->and($email->envelope_recipients)->toBe(['one@example.com', 'two@example.com'])
+        ->and($email->client_address)->toBe('203.0.113.7')
+        ->and($email->queue_id)->toBe('4cVqkW1lq8z2Xw1');
 });
 
 it('stores the file before committing the database transaction', function () {
@@ -98,7 +125,7 @@ it('stores the file before committing the database transaction', function () {
     });
 
     $storeAndDispatch = new StoreAndDispatch;
-    $storeAndDispatch->handle($mockParsedMail);
+    $storeAndDispatch->handle($mockParsedMail, new Envelope);
 
     expect($storeCalledBeforeCommit)->toBeTrue();
 });
@@ -119,7 +146,7 @@ it('rolls back transaction on error', function () {
 
     $storeAndDispatch = new StoreAndDispatch;
 
-    expect(fn () => $storeAndDispatch->handle($mockParsedMail))
+    expect(fn () => $storeAndDispatch->handle($mockParsedMail, new Envelope))
         ->toThrow(Exception::class, 'Test exception');
 });
 
@@ -138,7 +165,7 @@ it('rolls back database when store fails', function () {
 
     $storeAndDispatch = new StoreAndDispatch;
 
-    expect(fn () => $storeAndDispatch->handle($mockParsedMail))
+    expect(fn () => $storeAndDispatch->handle($mockParsedMail, new Envelope))
         ->toThrow(RuntimeException::class, 'Disk full');
 
     $this->assertDatabaseMissing('senders', ['address' => 'sender@example.com']);
