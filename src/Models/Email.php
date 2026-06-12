@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
@@ -69,10 +70,30 @@ class Email extends Model
         return $this->belongsTo(Sender::class);
     }
 
+    /**
+     * Build an unsaved Email from the SMTP envelope with its ULID and
+     * created_at pre-generated, so the storage path is derivable before the
+     * row exists: raw-first ingestion stores the file, then commits the row.
+     */
+    public static function fromEnvelope(Envelope $envelope): self
+    {
+        $email = new self([
+            'envelope_sender' => $envelope->sender,
+            'envelope_recipients' => $envelope->recipients,
+            'client_address' => $envelope->clientAddress,
+            'queue_id' => $envelope->queueId,
+        ]);
+
+        $email->ulid = $email->newUniqueId();
+        $email->created_at = CarbonImmutable::now();
+
+        return $email;
+    }
+
     public function path(): string
     {
         if ($this->created_at === null) {
-            throw new RuntimeException('Cannot generate path for unsaved Email model.');
+            throw new RuntimeException('Cannot generate a path before the Email has its ULID and created_at.');
         }
 
         $date = $this->created_at->format('Ymd');

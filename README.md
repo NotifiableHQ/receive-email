@@ -34,7 +34,7 @@ php artisan migrate
 
 ### 2. Listen for Incoming Emails
 
-Whenever an email is received, the package will dispatch the `Notifiable\\ReceiveEmail\\Events\\EmailReceived` event. On Laravel 11 and above, you should use a listener class:
+Whenever an email is received and parsed, the package will dispatch the `Notifiable\\ReceiveEmail\\Events\\EmailReceived` event. Accepted mail whose headers cannot be parsed is still kept — raw message and envelope row — and announced as `Notifiable\\ReceiveEmail\\Events\\MalformedEmailReceived` instead (same shape, carrying the `Email` model). On Laravel 11 and above, you should use a listener class:
 
 #### Create the Listener
 
@@ -262,12 +262,12 @@ Postscreen drops happen before the client ever reaches an smtpd process, so PREG
 
 ## Rejected and Failed Mail
 
-The server is receive-only: it never sends, relays, or bounces mail. Mail refused at SMTP time is the sending server's problem (see above). Once Postfix has accepted a message and piped it into your app, the pipe command resolves it in one of three ways:
+The server is receive-only: it never sends, relays, or bounces mail. Mail refused at SMTP time is the sending server's problem (see above). Once Postfix has accepted a message and piped it into your app, the pipe command resolves it in one of the following ways:
 
 | Outcome | Exit code | Disposition |
 |---------|-----------|-------------|
-| A pipe-time filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the discard. |
-| The message is malformed (e.g. missing required headers) | `0` | Discarded with a log entry. Retries cannot fix a broken message, and bouncing is impossible on a receive-only server. |
+| A pipe-time filter rejects the message | `0` | Discarded. The `EmailRejected` event is dispatched so your application retains visibility; no bounce is ever generated. A throwing `EmailRejected` listener is logged and never prevents the discard. Filters run on parseable mail before anything is stored, so a rejected message leaves no row and no file. |
+| The message is malformed (its headers cannot be parsed) | `0` | Kept, never lost. The raw message and an envelope-only row are stored (`parsed_at` stays null) and `MalformedEmailReceived` is dispatched; `EmailReceived` fires only for parsed mail. |
 | The pipe is misconfigured (e.g. `pipe-filter` or `pipe-command` is not a valid class), or the input exceeds `message-size-limit` | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later. |
 | An unexpected failure occurs (database down, disk full, ...) | `75` (`EX_TEMPFAIL`) | Postfix keeps the message queued and retries later, so transient outages never destroy accepted mail. |
 
@@ -295,7 +295,8 @@ The `--with-spf` opt-in flag is gone: `notifiable:setup-postfix` now installs an
 
 The pipe command previously exited `EX_NOHOST` for filtered mail, asking Postfix to bounce — impossible on a server that cannot send, so it produced queue churn and double-bounces. Now:
 
-- Filtered and malformed mail exits `0`: the message is discarded, `EmailRejected` is dispatched for filtered mail, and no bounce is requested.
+- Filtered mail exits `0`: the message is Discarded, `EmailRejected` is dispatched, and no bounce is requested.
+- Malformed mail also exits `0`, but is kept rather than discarded: the raw message and an envelope-only row are stored and `MalformedEmailReceived` is dispatched (see ADR-0003).
 - Transient failures (database down, disk full) exit `75` (`EX_TEMPFAIL`): Postfix keeps the message queued and retries.
 
 If you monitored pipe failures via Postfix bounce activity, switch to listening for `EmailRejected` and `SmtpRejectionObserved` instead.

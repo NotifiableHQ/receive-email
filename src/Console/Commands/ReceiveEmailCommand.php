@@ -53,12 +53,6 @@ class ReceiveEmailCommand extends Command
             }
 
             return $this->receive($bufferedStream);
-        } catch (MalformedMailException $exception) {
-            // Retries cannot fix a broken message and a Receive-only server
-            // never bounces, so the only permissible fate is to Discard it.
-            Log::warning('Discarding malformed mail.', ['exception' => $exception]);
-
-            return self::EX_OK;
         } catch (Throwable $exception) {
             // Tempfail preserves mail: Postfix keeps it queued, so it delivers once the operator fixes the failing condition.
             Log::error('Failed to receive email. Exiting EX_TEMPFAIL so Postfix keeps the message queued.', ['exception' => $exception]);
@@ -88,12 +82,19 @@ class ReceiveEmailCommand extends Command
             throw InvalidPipeFilterException::invalidClass(config('receive_email.pipe-filter'));
         }
 
-        if ($pipeFilter->handle($parsedMail) === false) {
-            // The message was already accepted at SMTP time, so a Pipe-time
-            // Filter rejection must Discard: the filter has dispatched
-            // EmailRejected, and a non-zero exit would ask Postfix for a
-            // bounce this Receive-only server can never deliver.
-            return self::EX_OK;
+        try {
+            if ($pipeFilter->handle($parsedMail) === false) {
+                // The message was already accepted at SMTP time, so a Pipe-time
+                // Filter rejection must Discard: the filter has dispatched
+                // EmailRejected, and a non-zero exit would ask Postfix for a
+                // bounce this Receive-only server can never deliver.
+                return self::EX_OK;
+            }
+        } catch (MalformedMailException) {
+            // Pipe-time Filters need parsed headers, so Malformed Mail is
+            // invisible to them: it falls through to the pipe command, which
+            // keeps it (raw file + envelope row) and announces it as
+            // MalformedEmailReceived — kept, never lost.
         }
 
         $pipeCommand = app(config('receive_email.pipe-command'));

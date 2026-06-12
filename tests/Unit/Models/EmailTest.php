@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Data\Recipients;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
@@ -75,11 +76,35 @@ it('stores two emails bearing the same Message-ID', function () {
     expect(Email::where('message_id', $messageId)->count())->toBe(2);
 });
 
-it('throws exception when generating path for unsaved email', function () {
+it('throws exception when generating a path without a pre-generated identity', function () {
     $email = new Email;
 
     $email->path();
-})->throws(RuntimeException::class, 'Cannot generate path for unsaved Email model.');
+})->throws(RuntimeException::class, 'Cannot generate a path before the Email has its ULID and created_at.');
+
+it('derives its storage path from the envelope before the row exists', function () {
+    $email = Email::fromEnvelope(new Envelope(
+        'envelope-sender@example.com',
+        ['envelope-recipient@example.com'],
+        '203.0.113.7',
+        '4cVqkW1lq8z2Xw1',
+    ));
+
+    $path = $email->path();
+
+    expect($email->exists)->toBeFalse()
+        ->and($path)->toBe("emails/{$email->created_at->format('Ymd')}/{$email->ulid}");
+
+    $email->save();
+    $email->refresh();
+
+    expect($email->path())->toBe($path)
+        ->and($email->envelope_sender)->toBe('envelope-sender@example.com')
+        ->and($email->envelope_recipients)->toBe(['envelope-recipient@example.com'])
+        ->and($email->client_address)->toBe('203.0.113.7')
+        ->and($email->queue_id)->toBe('4cVqkW1lq8z2Xw1')
+        ->and($email->parsed_at)->toBeNull();
+});
 
 it('generates correct path for email storage', function () {
     $sender = Sender::create([

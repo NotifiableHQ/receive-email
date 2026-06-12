@@ -11,6 +11,7 @@ use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
+use Notifiable\ReceiveEmail\Events\MalformedEmailReceived;
 use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use Notifiable\ReceiveEmail\Models\Email;
@@ -55,7 +56,8 @@ function runReceiveEmailCommand(string $input = "Subject: Test\r\n\r\nHello", ar
 }
 
 /**
- * A FakeParsedMail that records the contents handed to source().
+ * A FakeParsedMail that records the contents handed to source() and every
+ * path handed to store().
  */
 function recordingParsedMailFake(): FakeParsedMail
 {
@@ -63,11 +65,21 @@ function recordingParsedMailFake(): FakeParsedMail
     {
         public ?string $sourceContents = null;
 
+        /** @var string[] */
+        public array $storedPaths = [];
+
         public function source($source, Source $type = Source::Stream): ParsedMailContract
         {
             $this->sourceContents = is_resource($source) ? (string) stream_get_contents($source) : $source;
 
             return $this;
+        }
+
+        public function store(string $path): bool
+        {
+            $this->storedPaths[] = $path;
+
+            return parent::store($path);
         }
     };
 }
@@ -191,14 +203,18 @@ it('discards filter-rejected mail with EX_OK after dispatching EmailRejected', f
     app()->instance($filterClass, $failingFilter);
     Config::set('receive_email.email-filters', [$filterClass]);
 
-    ParsedMail::fake([
+    $fake = recordingParsedMailFake()->fake([
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
+    ParsedMail::swap($fake);
 
     $exitCode = runReceiveEmailCommand();
 
-    // Discard: never EX_NOHOST (68), which would ask Postfix for a bounce
-    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+    // Discard: never EX_NOHOST (68), which would ask Postfix for a bounce.
+    // Filters run on parseable mail before anything is stored: no row, no file.
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and($fake->storedPaths)->toBe([])
+        ->and(Email::query()->count())->toBe(0);
     Event::assertDispatched(EmailRejected::class);
     Event::assertNotDispatched(EmailReceived::class);
 });
@@ -269,20 +285,101 @@ it('exits EX_TEMPFAIL when a filter fails unexpectedly', function () {
     Log::shouldHaveReceived('error')->once();
 });
 
-it('discards malformed mail with EX_OK and logs the discard', function () {
+it('keeps Malformed Mail with its envelope row and announces MalformedEmailReceived', function () {
+    Event::fake();
+
+    ParsedMail::fake([
+        'stored' => true,
+        'sender' => fn () => throw MalformedMailException::missingSender(),
+    ]);
+
+    $exitCode = runReceiveEmailCommand(arguments: [
+        'sender' => 'envelope-sender@example.com',
+        'client_address' => '203.0.113.7',
+        'queue_id' => '4cVqkW1lq8z2Xw1',
+        'recipient' => ['envelope-recipient@example.com'],
+    ]);
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+
+    $email = Email::query()->sole();
+
+    expect($email->envelope_sender)->toBe('envelope-sender@example.com')
+        ->and($email->envelope_recipients)->toBe(['envelope-recipient@example.com'])
+        ->and($email->message_id)->toBeNull()
+        ->and($email->parsed_at)->toBeNull();
+
+    Event::assertDispatched(MalformedEmailReceived::class, fn ($event) => $event->email->is($email));
+    Event::assertNotDispatched(EmailReceived::class);
+});
+
+it('keeps Malformed Mail that a Pipe-time Filter tried to read', function () {
+    Event::fake();
+
+    // A custom filter touching a header Malformed Mail cannot provide:
+    // filters need parsed headers, so the mail is invisible to them and
+    // falls through to the pipe command, which keeps it.
+    $headerFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return $parsedMail->sender()->address !== 'blocked@example.com';
+        }
+    };
+
+    $filterClass = get_class($headerFilter);
+    app()->instance($filterClass, $headerFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    ParsedMail::fake([
+        'stored' => true,
+        'sender' => fn () => throw MalformedMailException::missingSender(),
+    ]);
+
+    $exitCode = runReceiveEmailCommand();
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK)
+        ->and(Email::query()->sole()->parsed_at)->toBeNull();
+
+    Event::assertDispatched(MalformedEmailReceived::class);
+    Event::assertNotDispatched(EmailRejected::class);
+    Event::assertNotDispatched(EmailReceived::class);
+});
+
+it('exits EX_TEMPFAIL with no committed row when the storage write returns false', function () {
     Event::fake();
     Log::spy();
 
     ParsedMail::fake([
-        'sender' => fn () => throw MalformedMailException::missingSender(),
+        'stored' => false,
         'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
     ]);
 
     $exitCode = runReceiveEmailCommand();
 
-    expect($exitCode)->toBe(ReceiveEmailCommand::EX_OK);
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL)
+        ->and(Email::query()->count())->toBe(0);
     Event::assertNotDispatched(EmailReceived::class);
-    Log::shouldHaveReceived('warning')->once();
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+    Log::shouldHaveReceived('error')->once();
+});
+
+it('exits EX_TEMPFAIL with no committed row when the storage write throws', function () {
+    Event::fake();
+    Log::spy();
+
+    ParsedMail::fake([
+        'stored' => fn () => throw new RuntimeException('Disk full.'),
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $exitCode = runReceiveEmailCommand();
+
+    expect($exitCode)->toBe(ReceiveEmailCommand::EX_TEMPFAIL)
+        ->and(Email::query()->count())->toBe(0);
+    Event::assertNotDispatched(EmailReceived::class);
+    Event::assertNotDispatched(MalformedEmailReceived::class);
+    Log::shouldHaveReceived('error')->once();
 });
 
 it('exits EX_TEMPFAIL when the pipe command fails unexpectedly', function () {
