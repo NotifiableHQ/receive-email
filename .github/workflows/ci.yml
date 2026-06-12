@@ -32,6 +32,55 @@ jobs:
       - name: Run tests
         run: vendor/bin/pest
 
+  s3-semantics:
+    runs-on: ubuntu-latest
+
+    name: S3 Semantics - MinIO
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # PHP 8.2 doubles as the proof that the dev dependencies (including
+      # the AWS S3 adapter) stay installable on the lowest supported PHP.
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mailparse
+          coverage: none
+
+      - name: Start MinIO
+        run: |
+          docker run --detach --name minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+
+      - name: Wait for MinIO and create the bucket
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          for attempt in $(seq 1 30); do
+            curl --silent --fail http://127.0.0.1:9000/minio/health/live && break
+            sleep 1
+          done
+          curl --silent --fail http://127.0.0.1:9000/minio/health/live
+          aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://receive-email
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run the S3 semantics suite
+        env:
+          RECEIVE_EMAIL_S3_ENDPOINT: http://127.0.0.1:9000
+          RECEIVE_EMAIL_S3_KEY: minioadmin
+          RECEIVE_EMAIL_S3_SECRET: minioadmin
+          RECEIVE_EMAIL_S3_BUCKET: receive-email
+          RECEIVE_EMAIL_S3_REGION: us-east-1
+        run: vendor/bin/pest --group=s3
+
   static-analysis:
     runs-on: ubuntu-latest
 

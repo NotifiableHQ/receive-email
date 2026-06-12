@@ -3,62 +3,177 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\Contracts\PipeCommandContract;
 use Notifiable\ReceiveEmail\Contracts\PipeFilterContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeCommandException;
 use Notifiable\ReceiveEmail\Exceptions\InvalidPipeFilterException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use RuntimeException;
+use Throwable;
 
 class ReceiveEmailCommand extends Command
 {
     public const EX_OK = 0;
 
-    public const EX_NOINPUT = 66;
-
-    public const EX_NOHOST = 68;
+    public const EX_TEMPFAIL = 75;
 
     /** @var string */
-    protected $signature = 'notifiable:receive-email';
+    protected $signature = 'notifiable:receive-email
+        {sender? : The Envelope Sender (SMTP MAIL FROM); empty for the null sender (MAIL FROM:<>).}
+        {client_address? : The IP address of the client that delivered the message.}
+        {queue_id? : The Postfix queue ID of the delivery.}
+        {recipient?* : The Envelope Recipients (SMTP RCPT TO) of the delivery.}';
 
     /** @var string */
     protected $description = 'Receive an email.';
 
     public function handle(): int
     {
-        $emailStream = fopen('php://stdin', 'r');
+        $emailStream = $this->inputStream();
 
         if ($emailStream === false) {
-            $this->error('Could not open stream.');
+            Log::error('Could not open input stream. Exiting EX_TEMPFAIL so Postfix keeps the message queued.');
 
-            return self::EX_NOINPUT;
+            return self::EX_TEMPFAIL;
         }
 
+        $bufferedStream = null;
+
         try {
-            $parsedMail = ParsedMail::source($emailStream);
+            $bufferedStream = $this->bufferInput($emailStream);
 
-            $pipeFilter = app(config('receive_email.pipe-filter'));
+            if ($bufferedStream === null) {
+                Log::error('Refusing input larger than the configured message-size-limit. Exiting EX_TEMPFAIL so Postfix keeps the message queued.');
 
-            if (! ($pipeFilter instanceof PipeFilterContract)) {
-                throw InvalidPipeFilterException::invalidClass(config('receive_email.pipe-filter'));
+                return self::EX_TEMPFAIL;
             }
 
-            if ($pipeFilter->handle($parsedMail) === false) {
-                return self::EX_NOHOST;
-            }
+            return $this->receive($bufferedStream);
+        } catch (Throwable $exception) {
+            // Tempfail preserves mail: Postfix keeps it queued, so it delivers once the operator fixes the failing condition.
+            Log::error('Failed to receive email. Exiting EX_TEMPFAIL so Postfix keeps the message queued.', ['exception' => $exception]);
 
-            $pipeCommand = app(config('receive_email.pipe-command'));
-
-            if (! ($pipeCommand instanceof PipeCommandContract)) {
-                throw InvalidPipeCommandException::invalidClass(config('receive_email.pipe-command'));
-            }
-
-            $pipeCommand->handle($parsedMail);
-
-            return self::EX_OK;
+            return self::EX_TEMPFAIL;
         } finally {
             if (is_resource($emailStream)) {
                 fclose($emailStream);
             }
+
+            if (is_resource($bufferedStream)) {
+                fclose($bufferedStream);
+            }
         }
+    }
+
+    /**
+     * @param  resource  $emailStream
+     */
+    private function receive($emailStream): int
+    {
+        $parsedMail = ParsedMail::source($emailStream);
+
+        $pipeFilter = app(config('receive_email.pipe-filter'));
+
+        if (! ($pipeFilter instanceof PipeFilterContract)) {
+            throw InvalidPipeFilterException::invalidClass(config('receive_email.pipe-filter'));
+        }
+
+        try {
+            if ($pipeFilter->handle($parsedMail) === false) {
+                // The message was already accepted at SMTP time, so a Pipe-time
+                // Filter rejection must Discard: the filter has dispatched
+                // EmailRejected, and a non-zero exit would ask Postfix for a
+                // bounce this Receive-only server can never deliver.
+                return self::EX_OK;
+            }
+        } catch (MalformedMailException) {
+            // Pipe-time Filters need parsed headers, so Malformed Mail is
+            // invisible to them: it falls through to the pipe command, which
+            // keeps it (raw file + envelope row) and announces it as
+            // MalformedEmailReceived — kept, never lost.
+        }
+
+        $pipeCommand = app(config('receive_email.pipe-command'));
+
+        if (! ($pipeCommand instanceof PipeCommandContract)) {
+            throw InvalidPipeCommandException::invalidClass(config('receive_email.pipe-command'));
+        }
+
+        $pipeCommand->handle($parsedMail, $this->envelope());
+
+        return self::EX_OK;
+    }
+
+    /**
+     * Bundle the envelope macros Postfix appends to the pipe's argv. The
+     * Envelope normalizes the empty strings Postfix passes for unavailable
+     * macros and for the null Envelope Sender (MAIL FROM:<>).
+     */
+    private function envelope(): Envelope
+    {
+        /** @var string|null $sender */
+        $sender = $this->argument('sender');
+
+        /** @var string|null $clientAddress */
+        $clientAddress = $this->argument('client_address');
+
+        /** @var string|null $queueId */
+        $queueId = $this->argument('queue_id');
+
+        /** @var string[] $recipients */
+        $recipients = $this->argument('recipient');
+
+        return new Envelope($sender, $recipients, $clientAddress, $queueId);
+    }
+
+    /**
+     * Copy the input into a seekable temp buffer, reading at most one byte
+     * past the configured message-size-limit. Postfix already enforces the
+     * limit at SMTP time; this guards against a hand-edited main.cf or a
+     * refactor dropping the setting, without pulling unbounded data into
+     * PHP memory.
+     *
+     * @param  resource  $input
+     * @return resource|null Null when the input exceeds the limit.
+     */
+    private function bufferInput($input)
+    {
+        $limit = Config::integer('receive_email.message-size-limit', 26214400);
+
+        $buffer = fopen('php://temp', 'r+');
+
+        if ($buffer === false) {
+            throw new RuntimeException('Could not open temporary buffer stream.');
+        }
+
+        $copied = stream_copy_to_stream($input, $buffer, $limit + 1);
+
+        if ($copied === false) {
+            fclose($buffer);
+
+            throw new RuntimeException('Could not read the input stream.');
+        }
+
+        if ($copied > $limit) {
+            fclose($buffer);
+
+            return null;
+        }
+
+        rewind($buffer);
+
+        return $buffer;
+    }
+
+    /**
+     * @return resource|false
+     */
+    protected function inputStream()
+    {
+        return fopen('php://stdin', 'r');
     }
 }

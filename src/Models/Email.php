@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
+use Notifiable\ReceiveEmail\Data\Envelope;
 use Notifiable\ReceiveEmail\Enums\Source;
 use Notifiable\ReceiveEmail\Exceptions\FailedToDeleteException;
+use Notifiable\ReceiveEmail\Exceptions\FailedToReadException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 use RuntimeException;
 
@@ -17,9 +19,15 @@ use function Notifiable\ReceiveEmail\storage;
 
 /**
  * @property string $ulid
- * @property string $message_id
- * @property-read  Sender $sender
- * @property CarbonImmutable $sent_at
+ * @property string|null $envelope_sender Envelope Sender (SMTP `MAIL FROM`); null for the null sender (`MAIL FROM:<>`)
+ * @property array<int, string> $envelope_recipients Envelope Recipients (SMTP `RCPT TO`)
+ * @property string|null $client_address
+ * @property string|null $queue_id
+ * @property string|null $message_id Header enrichment; null for Malformed Mail
+ * @property string|null $sender_ulid
+ * @property-read  Sender|null $sender Header Sender; null for Malformed Mail
+ * @property CarbonImmutable|null $sent_at Header enrichment; null for Malformed Mail
+ * @property CarbonImmutable|null $parsed_at Null until header parsing succeeds
  * @property CarbonImmutable|null $created_at
  */
 class Email extends Model
@@ -34,8 +42,14 @@ class Email extends Model
 
     protected $with = ['sender'];
 
+    protected $attributes = [
+        'envelope_recipients' => '[]',
+    ];
+
     protected $casts = [
+        'envelope_recipients' => 'array',
         'sent_at' => 'immutable_datetime',
+        'parsed_at' => 'immutable_datetime',
         'created_at' => 'immutable_datetime',
     ];
 
@@ -57,10 +71,30 @@ class Email extends Model
         return $this->belongsTo(Sender::class);
     }
 
+    /**
+     * Build an unsaved Email from the SMTP envelope with its ULID and
+     * created_at pre-generated, so the storage path is derivable before the
+     * row exists: raw-first ingestion stores the file, then commits the row.
+     */
+    public static function fromEnvelope(Envelope $envelope): self
+    {
+        $email = new self([
+            'envelope_sender' => $envelope->sender,
+            'envelope_recipients' => $envelope->recipients,
+            'client_address' => $envelope->clientAddress,
+            'queue_id' => $envelope->queueId,
+        ]);
+
+        $email->ulid = $email->newUniqueId();
+        $email->created_at = CarbonImmutable::now();
+
+        return $email;
+    }
+
     public function path(): string
     {
         if ($this->created_at === null) {
-            throw new RuntimeException('Cannot generate path for unsaved Email model.');
+            throw new RuntimeException('Cannot generate a path before the Email has its ULID and created_at.');
         }
 
         $date = $this->created_at->format('Ymd');
@@ -80,9 +114,23 @@ class Email extends Model
         }
     }
 
+    /**
+     * Parse the stored raw message, read back as a stream so any configured
+     * disk works — a remote disk (S3) re-downloads the message on every call.
+     *
+     * @throws FailedToReadException
+     */
     public function parsedMail(): ParsedMailContract
     {
-        return ParsedMail::source(storage()->path($this->path()), Source::Path);
+        $path = $this->path();
+
+        $stream = storage()->readStream($path);
+
+        if (! is_resource($stream)) {
+            throw FailedToReadException::path($path);
+        }
+
+        return ParsedMail::source($stream, Source::Stream);
     }
 
     /**

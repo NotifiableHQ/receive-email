@@ -15,9 +15,14 @@ return new class extends Migration
     {
         Schema::create(Config::string('receive_email.email-table'), function (Blueprint $table) {
             $table->ulid()->primary();
-            $table->string('message_id')->unique();
-            $table->foreignIdFor(Sender::class)->constrained()->cascadeOnDelete()->cascadeOnUpdate();
-            $table->timestamp('sent_at');
+            $table->string('envelope_sender')->nullable();
+            $table->json('envelope_recipients');
+            $table->string('client_address')->nullable();
+            $table->string('queue_id')->nullable();
+            $table->string('message_id')->nullable()->index();
+            $table->foreignIdFor(Sender::class)->nullable()->constrained()->nullOnDelete()->cascadeOnUpdate();
+            $table->timestamp('sent_at')->nullable();
+            $table->timestamp('parsed_at')->nullable();
             $table->timestamp('created_at');
         });
     }

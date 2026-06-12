@@ -3,8 +3,10 @@
 namespace Notifiable\ReceiveEmail;
 
 use Illuminate\Support\ServiceProvider;
+use Notifiable\ReceiveEmail\Console\Commands\ImportMailLogCommand;
 use Notifiable\ReceiveEmail\Console\Commands\ReceiveEmailCommand;
 use Notifiable\ReceiveEmail\Console\Commands\SetupPostfixCommand;
+use Notifiable\ReceiveEmail\Console\Commands\SyncPostfixCommand;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
 
 class ReceiveEmailServiceProvider extends ServiceProvider
@@ -44,7 +46,9 @@ class ReceiveEmailServiceProvider extends ServiceProvider
     {
         $this->commands([
             SetupPostfixCommand::class,
+            SyncPostfixCommand::class,
             ReceiveEmailCommand::class,
+            ImportMailLogCommand::class,
         ]);
     }
 }

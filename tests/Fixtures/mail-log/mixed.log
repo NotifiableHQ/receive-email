@@ -1,0 +1,22 @@
+Jun  9 12:00:01 mail postfix/smtpd[31001]: connect from mail.example.org[198.51.100.10]
+Jun  9 12:00:02 mail postfix/smtpd[31001]: 4F8C2A0012: client=mail.example.org[198.51.100.10]
+Jun  9 12:00:02 mail postfix/cleanup[31002]: 4F8C2A0012: message-id=<ok-1@example.org>
+Jun  9 12:00:03 mail postfix/pipe[31003]: 4F8C2A0012: to=<inbox@receiver.test>, relay=receive-email, delays=0.1/0/0/0.2, dsn=2.0.0, status=sent (delivered via receive-email service)
+Jun  9 12:00:03 mail postfix/smtpd[31001]: disconnect from mail.example.org[198.51.100.10]
+Jun  9 12:01:10 mail postfix/smtpd[31010]: NOQUEUE: reject: RCPT from spam-host.example[203.0.113.5]: 554 5.7.1 <spammer@blocked.example>: Sender address rejected: Access denied; from=<spammer@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<spam-host.example>
+Jun  9 12:02:20 mail postfix/smtpd[31011]: NOQUEUE: reject: RCPT from mail.forged.example[198.51.100.7]: 550 5.7.23 <inbox@receiver.test>: Recipient address rejected: Message rejected due to: SPF fail - not authorized; from=<forged@bank.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.forged.example>
+Jun  9 12:03:30 mail postfix/smtpd[31012]: NOQUEUE: reject: RCPT from unknown[192.0.2.9]: 504 5.5.2 <localhost>: Helo command rejected: need fully-qualified hostname; from=<someone@somewhere.example> to=<inbox@receiver.test> proto=SMTP helo=<localhost>
+Jun  9 12:03:40 mail postfix/smtpd[31022]: NOQUEUE: reject: RCPT from unknown[203.0.113.110]: 504 5.5.2 <bareuser>: Sender address rejected: need fully-qualified address; from=<bareuser> to=<inbox@receiver.test> proto=SMTP helo=<bare.example>
+Jun  9 12:03:50 mail postfix/smtpd[31023]: NOQUEUE: reject: RCPT from mail.ghost.example[203.0.113.111]: 450 4.1.8 <user@ghost.example>: Sender address rejected: Domain not found; from=<user@ghost.example> to=<inbox@receiver.test> proto=ESMTP helo=<mail.ghost.example>
+Jun  9 12:04:00 mail postfix/smtpd[31013]: NOQUEUE: reject: RCPT from fast.example[203.0.113.70]: 450 4.7.1 <inbox@receiver.test>: Recipient address rejected: rate limit exceeded; from=<bulk@fast.example> to=<inbox@receiver.test> proto=ESMTP helo=<fast.example>
+Jun  9 12:04:40 mail postfix/smtpd[31013]: warning: Connection rate limit exceeded: 42 from flood.example[203.0.113.77] for service smtp
+Jun  9 12:05:50 mail postfix/postscreen[31014]: NOQUEUE: reject: RCPT from [203.0.113.99]:54321: 550 5.7.1 Service unavailable; client [203.0.113.99] blocked using zen.spamhaus.org; from=<bot@botnet.example>, to=<inbox@receiver.test>, proto=ESMTP, helo=<bot.example>
+Jun  9 12:06:55 mail postfix/smtpd[31015]: NOQUEUE: reject: malformed beyond recognition
+2026-06-09T12:07:30.123456+00:00 mail postfix/smtpd[31016]: NOQUEUE: reject: RCPT from unknown[198.51.100.33]: 554 5.7.1 <crawler@blocked.example>: Sender address rejected: Access denied; from=<crawler@blocked.example> to=<inbox@receiver.test> proto=ESMTP helo=<crawler.example>
+Jun  9 12:11:00 mail postfix/postscreen[31021]: CONNECT from [203.0.113.101]:25372 to [198.51.100.2]:25
+Jun  9 12:11:10 mail postfix/postscreen[31021]: PREGREET 11 after 0.08 from [203.0.113.101]:25372: EHLO ylmf-pc\r\n
+Jun  9 12:11:11 mail postfix/postscreen[31021]: DISCONNECT [203.0.113.101]:25372
+Jun  9 12:11:25 mail postfix/postscreen[31021]: HANGUP after 1.9 from [203.0.113.102]:38492 in tests after SMTP handshake
+Jun  9 12:11:40 mail postfix/postscreen[31021]: DNSBL rank 4 for [203.0.113.103]:42061
+Jun  9 12:11:55 mail postfix/postscreen[31021]: NOQUEUE: reject: CONNECT from [203.0.113.104]:51246: too many connections
+Jun  9 12:11:56 mail postfix/postscreen[31021]: PASS NEW [198.51.100.10]:33672

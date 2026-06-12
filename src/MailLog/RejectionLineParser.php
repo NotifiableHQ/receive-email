@@ -1,0 +1,174 @@
+<?php
+
+namespace Notifiable\ReceiveEmail\MailLog;
+
+use Carbon\CarbonImmutable;
+use Carbon\Exceptions\InvalidFormatException;
+use Notifiable\ReceiveEmail\Data\SmtpRejection;
+use Notifiable\ReceiveEmail\Enums\RejectionClass;
+
+class RejectionLineParser
+{
+    /**
+     * Matches both rsyslog timestamp formats found on Ubuntu: traditional
+     * BSD syslog ("Jun  9 12:34:56", no year) and RFC 3339.
+     */
+    private const TIMESTAMP_PATTERN = '(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?|[A-Z][a-z]{2}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})';
+
+    private const SMTPD_REJECT_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/smtpd\[\d+\]:\sNOQUEUE:\sreject:\s\S+\sfrom\s(?<host>[^\[]+)\[(?<ip>[^\]]+)\]:\s(?<reason>.*?);\sfrom=<(?<sender>[^>]*)>(?:\sto=<(?<recipient>[^>]*)>)?/';
+
+    private const POSTSCREEN_REJECT_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sNOQUEUE:\sreject:\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+:\s(?<reason>.*?);\sfrom=<(?<sender>[^>]*)>,\sto=<(?<recipient>[^>]*)>/';
+
+    /**
+     * Postscreen's CONNECT-stage rejects ("too many connections", "all
+     * server ports busy") happen before any envelope exists, so the line
+     * carries only the client IP and a reason.
+     */
+    private const POSTSCREEN_CONNECT_REJECT_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sNOQUEUE:\sreject:\sCONNECT\sfrom\s\[(?<ip>[^\]]+)\]:\d+:\s(?<reason>.+)$/';
+
+    /**
+     * Postscreen in enforce mode drops clients without ever logging a
+     * NOQUEUE line: PREGREET (client talked before the server greeting),
+     * HANGUP (client disconnected during postscreen's tests), and DNSBL
+     * rank (client crossed the blocklist score threshold).
+     */
+    private const POSTSCREEN_PREGREET_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sPREGREET\s\d+\safter\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+:/';
+
+    private const POSTSCREEN_HANGUP_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sHANGUP\safter\s\S+\sfrom\s\[(?<ip>[^\]]+)\]:\d+\sin\s.+$/';
+
+    private const POSTSCREEN_DNSBL_PATTERN = '/^'.self::TIMESTAMP_PATTERN.'\s\S+\spostfix\/postscreen\[\d+\]:\sDNSBL\srank\s\d+\sfor\s\[(?<ip>[^\]]+)\]:\d+$/';
+
+    /**
+     * Whether the line claims to be a rejection. A line that does but fails
+     * parse() is counted as unparseable; anything else is ordinary log noise.
+     *
+     * Only definitive rejection events qualify: NOQUEUE rejects and
+     * postscreen enforce drops. Throttling notices like smtpd's
+     * "warning: Connection rate limit exceeded" describe no per-message
+     * rejection (the rejection, if any, logs its own NOQUEUE line) and are
+     * deliberately ordinary noise.
+     */
+    public function isRejectionLine(string $line): bool
+    {
+        return str_contains($line, 'NOQUEUE: reject:')
+            || $this->isPostscreenDropLine($line);
+    }
+
+    public function parse(string $line): ?SmtpRejection
+    {
+        if (preg_match(self::SMTPD_REJECT_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, $this->classify($matches['reason']));
+        }
+
+        if (preg_match(self::POSTSCREEN_REJECT_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, RejectionClass::Postscreen);
+        }
+
+        if (preg_match(self::POSTSCREEN_CONNECT_REJECT_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, $this->classify($matches['reason'], RejectionClass::Postscreen));
+        }
+
+        if (preg_match(self::POSTSCREEN_PREGREET_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1
+            || preg_match(self::POSTSCREEN_HANGUP_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1
+            || preg_match(self::POSTSCREEN_DNSBL_PATTERN, $line, $matches, PREG_UNMATCHED_AS_NULL) === 1) {
+            return $this->makeRejection($line, $matches, RejectionClass::Postscreen);
+        }
+
+        return null;
+    }
+
+    private function isPostscreenDropLine(string $line): bool
+    {
+        if (! str_contains($line, 'postfix/postscreen[')) {
+            return false;
+        }
+
+        return str_contains($line, ': PREGREET ')
+            || str_contains($line, ': HANGUP after ')
+            || str_contains($line, ': DNSBL rank ');
+    }
+
+    /**
+     * @param  array<int|string, string|null>  $matches
+     */
+    private function makeRejection(string $line, array $matches, RejectionClass $rejectionClass): ?SmtpRejection
+    {
+        $timestamp = $this->parseTimestamp($matches['timestamp'] ?? null);
+        $clientIp = $matches['ip'] ?? null;
+
+        if ($timestamp === null || $clientIp === null) {
+            return null;
+        }
+
+        return new SmtpRejection(
+            timestamp: $timestamp,
+            clientHost: $matches['host'] ?? null,
+            clientIp: $clientIp,
+            envelopeSender: $matches['sender'] ?? null,
+            recipient: $matches['recipient'] ?? null,
+            rejectionClass: $rejectionClass,
+            rawLine: $line,
+        );
+    }
+
+    /**
+     * The reason embeds attacker-influenced content — the sender address,
+     * HELO hostname, or recipient precede the Postfix-generated detail — so
+     * the arms anchor to that detail and run specific-before-broad: a list
+     * rejection from <spf-bounces@evil.example> or a HELO of
+     * spf.example.com must never classify as Spf.
+     */
+    private function classify(string $reason, RejectionClass $default = RejectionClass::Other): RejectionClass
+    {
+        $reason = strtolower($reason);
+
+        return match (true) {
+            // reject_non_fqdn_sender ("need fully-qualified address") and
+            // reject_unknown_sender_domain ("Domain not found") share the
+            // "Sender address rejected" prefix; only the "Access denied"
+            // detail marks an Envelope Sender list decision (logged by both
+            // the blacklist REJECT and the whitelist catch-all reject). The
+            // detail ends the reason, after any attacker-supplied text.
+            str_ends_with($reason, 'sender address rejected: access denied') => RejectionClass::EnvelopeList,
+            str_contains($reason, 'helo command rejected') => RejectionClass::Helo,
+            $this->isSpfReason($reason) => RejectionClass::Spf,
+            str_contains($reason, 'rate limit'),
+            str_contains($reason, 'too many connections') => RejectionClass::RateLimit,
+            default => $default,
+        };
+    }
+
+    /**
+     * policyd-spf reject reasons read "Message rejected due to: SPF fail -
+     * not authorized" (Softfail and error variants keep the prefix), so SPF
+     * is only recognized after that marker — a bare "spf" substring would
+     * also match senders and HELO hostnames embedded earlier in the reason.
+     */
+    private function isSpfReason(string $reason): bool
+    {
+        $marker = strpos($reason, 'message rejected due to:');
+
+        return $marker !== false && str_contains(substr($reason, $marker), 'spf');
+    }
+
+    private function parseTimestamp(?string $value): ?CarbonImmutable
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            if (ctype_digit($value[0])) {
+                return CarbonImmutable::parse($value);
+            }
+
+            $timestamp = CarbonImmutable::parse((string) preg_replace('/\s+/', ' ', $value));
+        } catch (InvalidFormatException) {
+            return null;
+        }
+
+        // Traditional syslog timestamps carry no year and default to the
+        // current one; a future date means the line is from last year.
+        return $timestamp->isFuture() ? $timestamp->subYear() : $timestamp;
+    }
+}

@@ -28,7 +28,7 @@ it('has many emails', function () {
     expect($sender->emails())->toBeInstanceOf(HasMany::class);
 });
 
-it('deletes email files when sender is deleted', function () {
+it('nulls the sender on its emails and preserves them when deleted', function () {
     $sender = Sender::create([
         'address' => 'sender@example.com',
         'display' => 'Sender Name',
@@ -47,11 +47,13 @@ it('deletes email files when sender is deleted', function () {
     Storage::disk('local')->put($email1->path(), 'content 1');
     Storage::disk('local')->put($email2->path(), 'content 2');
 
-    expect(Storage::disk('local')->exists($email1->path()))->toBeTrue()
-        ->and(Storage::disk('local')->exists($email2->path()))->toBeTrue();
-
     $sender->delete();
 
-    expect(Storage::disk('local')->exists($email1->path()))->toBeFalse()
-        ->and(Storage::disk('local')->exists($email2->path()))->toBeFalse();
+    $email1->refresh();
+    $email2->refresh();
+
+    expect($email1->sender_ulid)->toBeNull()
+        ->and($email2->sender_ulid)->toBeNull()
+        ->and(Storage::disk('local')->exists($email1->path()))->toBeTrue()
+        ->and(Storage::disk('local')->exists($email2->path()))->toBeTrue();
 });

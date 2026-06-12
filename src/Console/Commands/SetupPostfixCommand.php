@@ -3,23 +3,42 @@
 namespace Notifiable\ReceiveEmail\Console\Commands;
 
 use Illuminate\Console\Command as ConsoleCommand;
-use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Process;
+use Notifiable\ReceiveEmail\Console\Commands\Concerns\ManagesPostfixConfig;
+use Notifiable\ReceiveEmail\Support\PostfixDirectory;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 
 class SetupPostfixCommand extends ConsoleCommand
 {
-    public const POSTFIX_DIR = '/etc/postfix';
+    use ManagesPostfixConfig;
+
+    public const POSTFIX_DIR = PostfixDirectory::DEFAULT;
+
+    private const RECIPIENT_RESTRICTIONS = 'permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination';
+
+    /**
+     * The os-release file consulted by the operating system preflight check.
+     * Overridable in tests.
+     */
+    public static string $osReleasePath = '/etc/os-release';
+
+    /**
+     * Overrides the effective user id consulted by the root preflight check.
+     * For tests only; null means the real effective user id.
+     */
+    public static ?int $effectiveUserId = null;
 
     private const DOMAIN_PATTERN = '/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/';
 
     /** @var string */
     protected $signature = 'notifiable:setup-postfix
         {domain : The domain where to receive emails from.}
-        {--user= : The system user to run the pipe command as.}
+        {--user= : The system user to run the pipe command as. Defaults to $SUDO_USER, then the current user.}
         {--tls-cert= : Path to the TLS certificate file (PEM format).}
         {--tls-key= : Path to the TLS private key file (PEM format).}
-        {--with-spf : Install and configure SPF verification via policyd-spf.}';
+        {--without-spf : Skip SPF verification setup (not recommended; SPF is what makes the Envelope Sender trustworthy).}
+        {--force : Skip the operating system requirement check (Ubuntu 24.04+).}';
 
     /** @var string */
     protected $description = 'Install and Configure Postfix to receive emails.';
@@ -40,19 +59,35 @@ class SetupPostfixCommand extends ConsoleCommand
         }
 
         try {
+            $this->assertRunningAsRoot();
+            $this->assertSupportedOperatingSystem();
+            $user = $this->resolvePipeUser();
+
             $this->installPostfix($domain);
             $this->configureMainConfigFile($domain);
-            $this->configureMasterConfigFile();
+            $this->configureMasterConfigFile($user);
 
-            if ($this->option('with-spf')) {
-                $this->configureSPF();
+            if ($this->option('without-spf')) {
+                $this->info("\nSkipping SPF verification (--without-spf): the Envelope Sender of inbound mail will not be verified.");
             } else {
-                $this->info("\nFor production use, consider --with-spf for SPF verification, and rspamd for DKIM/DMARC.");
+                $this->configureSPF();
             }
 
+            $this->info("\nFor DKIM/DMARC verification, consider rspamd.");
+
+            $this->syncSenderAccessMaps();
+            $this->verifyPostfixConfiguration($domain);
             $this->reloadPostfix();
         } catch (RuntimeException $e) {
             $this->error($e->getMessage());
+
+            if ($this->postfixReloadIsPending()) {
+                $this->warn(
+                    'Setup wrote configuration to '.PostfixDirectory::$path.' that is not yet active. '
+                    .'The next notifiable:sync-postfix run (e.g. from a deploy hook) will activate it '
+                    .'only after `postfix check` passes.'
+                );
+            }
 
             return Command::FAILURE;
         }
@@ -64,89 +99,117 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nInstalling Postfix\n");
 
-        $postfixCheck = shell_exec('dpkg -l | grep postfix');
+        $postfixCheck = Process::run('dpkg -l | grep postfix')->output();
 
-        if (is_string($postfixCheck) && str($postfixCheck)->contains(' postfix ')) {
+        if (str($postfixCheck)->contains(' postfix ')) {
             $this->line('Postfix is already installed.');
 
             return;
         }
 
-        $escapedDomain = escapeshellarg($domain);
+        $update = Process::run('apt-get update');
 
-        $this->line((string) shell_exec('apt-get update'));
-        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/mailname string {$escapedDomain}\""));
-        $this->line((string) shell_exec("debconf-set-selections <<< \"postfix postfix/main_mailer_type string 'Internet Site'\""));
-        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix'));
+        if (! $update->successful()) {
+            throw new RuntimeException(
+                '`apt-get update` failed; aborting setup before any configuration is changed: '
+                .trim($update->output().' '.$update->errorOutput())
+            );
+        }
+
+        $this->line($update->output());
+
+        // debconf-set-selections stores the value verbatim (it is not a
+        // shell), so the echoed line must carry no embedded quotes: they
+        // would reach /etc/mailname and mydestination through the package's
+        // postinst. The whole line is escaped as one shell argument instead.
+        $mailname = escapeshellarg("postfix postfix/mailname string {$domain}");
+        $mailerType = escapeshellarg('postfix postfix/main_mailer_type string Internet Site');
+
+        $this->line(Process::run("echo {$mailname} | debconf-set-selections")->output());
+        $this->line(Process::run("echo {$mailerType} | debconf-set-selections")->output());
+
+        $install = Process::run('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix');
+
+        if (! $install->successful()) {
+            throw new RuntimeException(
+                '`apt-get install -y postfix` failed; aborting setup before any configuration is changed: '
+                .trim($install->output().' '.$install->errorOutput())
+            );
+        }
+
+        $this->line($install->output());
     }
 
     /**
-     * Configure the main.cf file.
+     * Configure the main.cf parameters.
      */
     private function configureMainConfigFile(string $domain): void
     {
         $this->info("\nConfiguring the Main config file.\n");
 
-        $mainConfig = $this->getConfigPath('main.cf');
-
-        $newHostname = "myhostname = $domain";
-        $oldHostname = $this->editLine($mainConfig, '/^myhostname = (.*)$/m', $newHostname);
-
-        if ($oldHostname === null) {
-            throw new RuntimeException("'myhostname' is missing from {$mainConfig}.");
-        }
+        $this->setMainParameter('myhostname', $domain);
 
         // Recipient restrictions
-        $this->upsertOrEditLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination');
+        $this->setMainParameter('smtpd_recipient_restrictions', self::RECIPIENT_RESTRICTIONS);
 
-        $this->upsertLine($mainConfig, 'local_recipient_maps =');
+        $this->setMainParameter('local_recipient_maps', '');
 
         // Disable outbound delivery (receive-only)
-        $this->upsertLine($mainConfig, 'default_transport = error');
-        $this->upsertLine($mainConfig, 'relay_transport = error');
+        $this->setMainParameter('default_transport', 'error');
+        $this->setMainParameter('relay_transport', 'error');
 
         // Message size limit
-        $this->upsertOrEditLine($mainConfig, '/^message_size_limit = (.*)$/m', 'message_size_limit = '.config('receive_email.message-size-limit', 26214400));
+        $sizeLimit = config('receive_email.message-size-limit', 26214400);
+        $this->setMainParameter('message_size_limit', "{$sizeLimit}");
 
         // HELO restrictions
-        $this->upsertLine($mainConfig, 'smtpd_helo_required = yes');
-        $this->upsertLine($mainConfig, 'smtpd_helo_restrictions = reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
+        $this->setMainParameter('smtpd_helo_required', 'yes');
+        $this->setMainParameter('smtpd_helo_restrictions', 'reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname');
 
-        // Sender restrictions
-        $this->upsertLine($mainConfig, 'smtpd_sender_restrictions = reject_non_fqdn_sender, reject_unknown_sender_domain');
+        // smtpd_sender_restrictions is owned by notifiable:sync-postfix,
+        // invoked at the end of setup.
 
         // Disable VRFY
-        $this->upsertLine($mainConfig, 'disable_vrfy_command = yes');
+        $this->setMainParameter('disable_vrfy_command', 'yes');
 
         // Hide version from banner
-        $this->upsertLine($mainConfig, 'smtpd_banner = $myhostname ESMTP');
+        $this->setMainParameter('smtpd_banner', '$myhostname ESMTP');
 
         // Rate limiting
-        $this->upsertLine($mainConfig, 'smtpd_client_connection_rate_limit = 30');
-        $this->upsertLine($mainConfig, 'smtpd_client_message_rate_limit = 60');
-        $this->upsertLine($mainConfig, 'smtpd_client_recipient_rate_limit = 120');
-        $this->upsertLine($mainConfig, 'smtpd_error_sleep_time = 1s');
-        $this->upsertLine($mainConfig, 'smtpd_soft_error_limit = 5');
-        $this->upsertLine($mainConfig, 'smtpd_hard_error_limit = 10');
+        $this->setMainParameter('smtpd_client_connection_rate_limit', '30');
+        $this->setMainParameter('smtpd_client_message_rate_limit', '60');
+        $this->setMainParameter('smtpd_client_recipient_rate_limit', '120');
+        $this->setMainParameter('smtpd_error_sleep_time', '1s');
+        $this->setMainParameter('smtpd_soft_error_limit', '5');
+        $this->setMainParameter('smtpd_hard_error_limit', '10');
+
+        // postscreen: drop clients that talk before the SMTP greeting
+        $this->setMainParameter('postscreen_greet_action', 'enforce');
 
         // Data restrictions
-        $this->upsertLine($mainConfig, 'smtpd_data_restrictions = reject_unauth_pipelining');
+        $this->setMainParameter('smtpd_data_restrictions', 'reject_unauth_pipelining');
 
         // Timeout hardening
-        $this->upsertLine($mainConfig, 'smtpd_timeout = 120s');
+        $this->setMainParameter('smtpd_timeout', '120s');
 
-        // Queue lifetimes
-        $this->upsertLine($mainConfig, 'maximal_queue_lifetime = 1d');
-        $this->upsertLine($mainConfig, 'bounce_queue_lifetime = 1d');
+        // Queue lifetimes: the queue is the durability buffer for tempfailed
+        // mail, so the retry window must outlive a multi-day incident.
+        // bounce_queue_lifetime governs ALL mail with a null Envelope Sender
+        // — including inbound DSNs accepted through the whitelist <>
+        // exemption, not just locally generated bounces — so it must match
+        // maximal_queue_lifetime: at 0, a single pipe tempfail would destroy
+        // accepted mail after one delivery attempt.
+        $this->setMainParameter('maximal_queue_lifetime', '5d');
+        $this->setMainParameter('bounce_queue_lifetime', '5d');
 
         // TLS configuration
-        $this->configureTLS($mainConfig);
+        $this->configureTLS();
     }
 
     /**
      * Configure TLS if cert and key are provided.
      */
-    private function configureTLS(string $mainConfig): void
+    private function configureTLS(): void
     {
         /** @var string|null $tlsCert */
         $tlsCert = $this->option('tls-cert');
@@ -163,12 +226,13 @@ class SetupPostfixCommand extends ConsoleCommand
                 throw new RuntimeException("TLS key file does not exist: {$tlsKey}");
             }
 
-            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_cert_file = (.*)$/m', "smtpd_tls_cert_file = {$tlsCert}");
-            $this->upsertOrEditLine($mainConfig, '/^smtpd_tls_key_file = (.*)$/m', "smtpd_tls_key_file = {$tlsKey}");
-            $this->upsertLine($mainConfig, 'smtpd_tls_security_level = may');
-            $this->upsertLine($mainConfig, 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1');
-            $this->upsertLine($mainConfig, 'smtpd_tls_loglevel = 1');
-            $this->upsertLine($mainConfig, 'smtp_tls_security_level = none');
+            $this->setMainParameter('smtpd_tls_cert_file', $tlsCert);
+            $this->setMainParameter('smtpd_tls_key_file', $tlsKey);
+            $this->setMainParameter('smtpd_tls_security_level', 'may');
+            // ">=TLSv1.2" requires Postfix 3.6+; Ubuntu 24.04 ships 3.8.
+            $this->setMainParameter('smtpd_tls_protocols', '>=TLSv1.2');
+            $this->setMainParameter('smtpd_tls_loglevel', '1');
+            $this->setMainParameter('smtp_tls_security_level', 'none');
         } else {
             $this->warn('TLS is not configured. Inbound SMTP connections will be unencrypted.');
             $this->warn('Use --tls-cert and --tls-key to enable TLS.');
@@ -176,27 +240,31 @@ class SetupPostfixCommand extends ConsoleCommand
     }
 
     /**
-     * Configure the master.cf file.
+     * Configure the master.cf services.
      */
-    private function configureMasterConfigFile(): void
+    private function configureMasterConfigFile(string $user): void
     {
         $this->info("\nConfiguring the Master config file.\n");
 
-        $masterConfig = $this->getConfigPath('master.cf');
+        // postscreen topology: postscreen owns port 25 and drops botnet
+        // zombies before they consume an smtpd process; legitimate clients
+        // are handed to smtpd as a pass-through service, where the
+        // content_filter keeps piping accepted mail into the notifiable
+        // transport. tlsproxy keeps inbound STARTTLS working behind
+        // postscreen; dnsblog is its DNS lookup helper.
+        $this->setMasterService('smtp/inet', 'smtp inet n - - - 1 postscreen');
+        $this->setMasterService('smtpd/pass', 'smtpd pass - - - - - smtpd -o content_filter=notifiable:dummy');
+        $this->setMasterService('dnsblog/unix', 'dnsblog unix - - - - 0 dnsblog');
+        $this->setMasterService('tlsproxy/unix', 'tlsproxy unix - - - - 0 tlsproxy');
 
-        $newSmtpDaemon = 'smtp inet n - - - - smtpd -o content_filter=notifiable:dummy';
-        $oldSmtpDaemon = $this->editLine($masterConfig, '/^smtp(\s+)inet(.*)$/m', $newSmtpDaemon);
-
-        if ($oldSmtpDaemon === null) {
-            throw new RuntimeException("'smtp inet' is missing from {$masterConfig}.");
-        }
-
-        $user = $this->resolveUser();
         $command = $this->getReceiveEmailCommand();
         $concurrency = config('receive_email.pipe-concurrency', 4);
 
-        $deliveryMethod = "notifiable unix - n n - {$concurrency} pipe flags=F user=$user argv={$command}";
-        $this->upsertOrEditLine($masterConfig, '/^notifiable(.*)$/m', $deliveryMethod);
+        // null_sender= (empty) passes the null Envelope Sender
+        // (MAIL FROM:<>, DSNs) through the ${sender} macro as an empty
+        // string, so it stores as null — never the literal MAILER-DAEMON
+        // Postfix substitutes by default.
+        $this->setMasterService('notifiable/unix', "notifiable unix - n n - {$concurrency} pipe flags=F user={$user} null_sender= argv={$command}");
     }
 
     /**
@@ -206,100 +274,216 @@ class SetupPostfixCommand extends ConsoleCommand
     {
         $this->info("\nConfiguring SPF verification\n");
 
-        $this->line((string) shell_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y postfix-policyd-spf-python'));
+        $this->installSpfPolicyDaemon();
 
-        $mainConfig = $this->getConfigPath('main.cf');
-        $this->upsertLine($mainConfig, 'policy-spf_time_limit = 3600s');
+        $this->setMainParameter('policy-spf_time_limit', '3600s');
 
         // Update smtpd_recipient_restrictions to include SPF check
-        $smtpdRecipientRestrictions = 'smtpd_recipient_restrictions = permit_mynetworks, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination, check_policy_service unix:private/policy-spf';
-        $this->editLine($mainConfig, '/^smtpd_recipient_restrictions = (.*)$/m', $smtpdRecipientRestrictions);
+        $this->setMainParameter(
+            'smtpd_recipient_restrictions',
+            self::RECIPIENT_RESTRICTIONS.', check_policy_service unix:private/policy-spf'
+        );
 
-        $masterConfig = $this->getConfigPath('master.cf');
-        $this->upsertLine($masterConfig, 'policy-spf unix -  n  n  -  0  spawn user=policyd-spf argv=/usr/bin/policyd-spf');
+        $this->setMasterService('policy-spf/unix', 'policy-spf unix - n n - 0 spawn user=policyd-spf argv=/usr/bin/policyd-spf');
     }
 
-    private function resolveUser(): string
+    /**
+     * Ubuntu 24.04 packages the SPF policy daemon as
+     * postfix-policyd-spf-python; upstream is migrating to spf-engine,
+     * so later releases may only carry that name. Both ship the same
+     * /usr/bin/policyd-spf entry point.
+     */
+    private function installSpfPolicyDaemon(): void
+    {
+        foreach (['postfix-policyd-spf-python', 'spf-engine'] as $package) {
+            $install = Process::run("DEBIAN_FRONTEND=noninteractive apt-get install -y {$package}");
+
+            if ($install->successful()) {
+                $this->line($install->output());
+
+                return;
+            }
+        }
+
+        throw new RuntimeException(
+            'Failed to install the SPF policy daemon: neither postfix-policyd-spf-python nor spf-engine could be '
+            .'installed. SPF verification is what makes Envelope Sender filtering trustworthy; '
+            .'pass --without-spf to set up without it.'
+        );
+    }
+
+    /**
+     * Setup installs packages and edits the Postfix configuration,
+     * so it must run as the effective root user — abort before
+     * anything is mutated.
+     */
+    private function assertRunningAsRoot(): void
+    {
+        $effectiveUserId = static::$effectiveUserId
+            ?? (function_exists('posix_geteuid') ? posix_geteuid() : null);
+
+        if ($effectiveUserId !== 0) {
+            throw new RuntimeException(
+                'This command must be run as root: it installs packages and edits '.PostfixDirectory::$path.'. '
+                .'Re-run as `sudo php artisan notifiable:setup-postfix`.'
+            );
+        }
+    }
+
+    /**
+     * The supported deployment platform is Ubuntu 24.04+. Other Debian-like
+     * systems may work; --force skips the check for those.
+     */
+    private function assertSupportedOperatingSystem(): void
+    {
+        if ($this->option('force')) {
+            $this->warn('Skipping the operating system check (--force).');
+
+            return;
+        }
+
+        $osRelease = $this->readOsRelease();
+
+        $id = $osRelease['ID'] ?? 'unknown';
+        $versionId = $osRelease['VERSION_ID'] ?? '0';
+
+        if ($id !== 'ubuntu' || version_compare($versionId, '24.04', '<')) {
+            throw new RuntimeException(
+                "Unsupported operating system: {$id} {$versionId}. This package supports Ubuntu 24.04+. "
+                .'Pass --force to attempt setup on other Debian-like systems.'
+            );
+        }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function readOsRelease(): array
+    {
+        $path = static::$osReleasePath;
+
+        if (! file_exists($path)) {
+            throw new RuntimeException(
+                "Cannot detect the operating system: {$path} does not exist. This package supports Ubuntu 24.04+. "
+                .'Pass --force to attempt setup on other Debian-like systems.'
+            );
+        }
+
+        $content = file_get_contents($path);
+
+        if ($content === false) {
+            throw new RuntimeException("Failed to read file: {$path}");
+        }
+
+        $fields = [];
+
+        foreach (explode("\n", $content) as $line) {
+            if (preg_match('/^([A-Z_]+)="?([^"]*)"?$/', trim($line), $matches)) {
+                $fields[$matches[1]] = $matches[2];
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Verify the resulting configuration before reloading Postfix. A
+     * pre-installed Postfix can carry a foreign mydestination that would
+     * greet senders with "relay access denied" for the receiving domain.
+     */
+    private function verifyPostfixConfiguration(string $domain): void
+    {
+        $this->info("\nVerifying the Postfix configuration\n");
+
+        $this->assertPostfixCheckPasses();
+
+        $mydestination = trim(Process::run('postconf -x mydestination')->output());
+
+        $destinations = preg_split('/[\s,]+/', trim((string) str($mydestination)->after('='))) ?: [];
+
+        if (! in_array($domain, $destinations, true)) {
+            throw new RuntimeException(
+                "mydestination does not include {$domain} (got `{$mydestination}`), so Postfix would refuse its mail "
+                ."with \"relay access denied\". Fix it with `postconf -e 'mydestination = {$domain}, localhost'` "
+                .'and re-run this command.'
+            );
+        }
+    }
+
+    /**
+     * Resolve the system user the pipe command runs as: the --user option,
+     * then $SUDO_USER, then the current user. Postfix refuses to execute
+     * pipe commands as a privileged user, so resolving to root must abort
+     * setup before anything is mutated.
+     */
+    private function resolvePipeUser(): string
     {
         /** @var string|null $user */
         $user = $this->option('user');
 
         if ($user === null) {
-            $user = function_exists('posix_geteuid')
-                ? posix_getpwuid(posix_geteuid())['name'] ?? get_current_user()
-                : get_current_user();
+            $sudoUser = getenv('SUDO_USER');
+
+            $user = is_string($sudoUser) && $sudoUser !== ''
+                ? $sudoUser
+                : $this->currentUser();
         }
 
         if (! preg_match('/^[a-zA-Z0-9_-]+$/', $user)) {
             throw new RuntimeException("Invalid system user: {$user}");
         }
 
+        if ($user === 'root') {
+            throw new RuntimeException(
+                'The pipe command cannot run as root: Postfix refuses to execute pipe commands as a privileged user. '
+                .'Re-run as `sudo php artisan notifiable:setup-postfix` from your deploy user, or pass --user=<deploy-user> explicitly.'
+            );
+        }
+
         return $user;
+    }
+
+    private function currentUser(): string
+    {
+        return function_exists('posix_geteuid')
+            ? posix_getpwuid(posix_geteuid())['name'] ?? get_current_user()
+            : get_current_user();
+    }
+
+    /**
+     * The built-in sender lists are enforced as SMTP-time Envelope Sender
+     * access maps; notifiable:sync-postfix owns those maps and the
+     * smtpd_sender_restrictions line, and deploy hooks re-run it when the
+     * lists change. Setup invokes it once and reloads Postfix itself after
+     * the postflight checks.
+     */
+    private function syncSenderAccessMaps(): void
+    {
+        $this->info("\nSyncing the Envelope Sender access maps\n");
+
+        if ($this->call(SyncPostfixCommand::class, ['--no-reload' => true]) !== Command::SUCCESS) {
+            throw new RuntimeException('Failed to sync the Envelope Sender access maps.');
+        }
     }
 
     private function reloadPostfix(): void
     {
         $this->info("\nReloading postfix\n");
-        $this->line((string) shell_exec('systemctl reload postfix'));
-    }
 
-    private function getConfigPath(string $config): string
-    {
-        $path = self::POSTFIX_DIR.'/'.$config;
+        $reload = Process::run('systemctl reload postfix');
 
-        if (! file_exists($path)) {
-            throw new RuntimeException("The {$path} file does not exist!");
+        if (! $reload->successful()) {
+            throw new RuntimeException(
+                'Failed to reload Postfix: the verified configuration is not active. '
+                .trim($reload->output().' '.$reload->errorOutput())
+            );
         }
 
-        return $path;
-    }
+        // The inner sync ran with --no-reload, leaving its reload pending;
+        // this reload activates that configuration too.
+        $this->clearPostfixReloadPending();
 
-    private function editLine(string $filePath, string $regex, string $newLine): ?string
-    {
-        $content = file_get_contents($filePath);
-
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$filePath}");
-        }
-
-        $matches = [];
-        if (! preg_match($regex, $content, $matches)) {
-            return null;
-        }
-
-        /** @var string $originalLine */
-        $originalLine = Arr::first($matches);
-
-        file_put_contents($filePath, str_replace($originalLine, $newLine, $content));
-
-        $this->line("--- Editing {$filePath} ---");
-        $this->line("From: {$originalLine}");
-        $this->line("To:  {$newLine}");
-
-        return $originalLine;
-    }
-
-    private function upsertOrEditLine(string $filePath, string $regex, string $newLine): void
-    {
-        if ($this->editLine($filePath, $regex, $newLine) === null) {
-            $this->upsertLine($filePath, $newLine);
-        }
-    }
-
-    private function upsertLine(string $filePath, string $line): void
-    {
-        $content = file_get_contents($filePath);
-
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$filePath}");
-        }
-
-        if (str($content)->contains($line)) {
-            return;
-        }
-
-        file_put_contents($filePath, "\n$line\n", FILE_APPEND);
-        $this->line("Append to {$filePath} : {$line}");
+        $this->info('Postfix reloaded.');
     }
 
     private function getReceiveEmailCommand(): string
@@ -311,6 +495,10 @@ class SetupPostfixCommand extends ConsoleCommand
         // always calls the active release after future deploys.
         $basePath = preg_replace('#/releases/[^/]+$#', '/current', $basePath);
 
-        return "php {$basePath}/artisan notifiable:receive-email";
+        // The macros hand the pipe the SMTP envelope as argv arguments.
+        // ${recipient} expands to every Envelope Recipient of the delivery
+        // (message-scoped by decision: no destination_recipient_limit, one
+        // delivery = one row carrying all of them).
+        return "php {$basePath}/artisan notifiable:receive-email \${sender} \${client_address} \${queue_id} \${recipient}";
     }
 }

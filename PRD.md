@@ -290,11 +290,11 @@ And a timeout to prevent slowloris-style SMTP attacks:
 smtpd_timeout = 120s
 ```
 
-And shorter queue lifetimes since a receive-only server shouldn't retry for 5 days (the default):
+And explicit queue lifetimes. (Superseded in review: both stay at `5d` — the queue is the durability buffer for tempfailed inbound mail, so the retry window must outlive a multi-day incident, and `bounce_queue_lifetime` governs *all* null-Envelope-Sender mail, including accepted inbound DSNs.)
 
 ```
-maximal_queue_lifetime = 1d
-bounce_queue_lifetime = 1d
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 5d
 ```
 
 These values are NOT made configurable — they are sensible defaults for a receive-only server and don't need per-deployment tuning in the same way that message size or concurrency do.
@@ -308,8 +308,8 @@ These values are NOT made configurable — they are sensible defaults for a rece
 - `smtpd_hard_error_limit = 10` — After 10 hard errors, disconnect the client.
 - `smtpd_data_restrictions = reject_unauth_pipelining` — Blocks clients that send commands before receiving the server's response (common spam technique).
 - `smtpd_timeout = 120s` — Disconnect clients that idle for 2 minutes.
-- `maximal_queue_lifetime = 1d` — Don't retry undeliverable messages for more than 1 day.
-- `bounce_queue_lifetime = 1d` — Don't retry bounce messages for more than 1 day.
+- `maximal_queue_lifetime = 5d` — Keep retrying tempfailed messages for up to 5 days; the queue is the durability buffer for accepted mail.
+- `bounce_queue_lifetime = 5d` — Applies to all mail with a null envelope sender — including accepted inbound DSNs, not just bounces — so it matches `maximal_queue_lifetime`.
 
 ### Acceptance Criteria
 - All 10 parameters above are written to `main.cf` during setup
@@ -530,16 +530,16 @@ public function handle(ParsedMailContract $parsedMail): void
 
 ## Out of Scope
 
-The following items were identified in the review but are explicitly NOT part of this PRD:
+The following items were identified in the review but are explicitly NOT part of this PRD. Items marked **decided** were resolved by the subsequent receive-only hardening wave; the ADRs in `docs/adr/` are the canonical record.
 
-- **Wrong exit code (`EX_NOHOST` for filtered mail)** — P0 item, separate PRD
-- **`user=root` default when running with `sudo`** — P0 item, separate PRD
-- **Envelope metadata not passed to pipe** — P1, separate PRD (architectural change)
+- **Wrong exit code (`EX_NOHOST` for filtered mail)** — **decided** (ADR-0001): pipe-time rejections and malformed mail are discarded with `EX_OK` (dispatching `EmailRejected`); transient failures exit `EX_TEMPFAIL` so the message stays queued. A receive-only server never bounces.
+- **`user=root` default when running with `sudo`** — **decided**: the pipe user resolves from `$SUDO_USER`, then the current user, and setup aborts when it resolves to `root`.
+- **Envelope metadata not passed to pipe** — still open as an architectural change, but defused: sender filtering moved to SMTP time on the Envelope Sender (ADR-0001), and SMTP-time rejections are surfaced to the application by the mail-log importer (ADR-0002), so the pipe no longer needs envelope data for those concerns.
 - **`content_filter` on `smtp inet` vs `main.cf`** — P2, separate PRD
 - **`flags=F` mbox separator** — P2, separate investigation
-- **Postscreen configuration** — recommended but optional, separate PRD
+- **Postscreen configuration** — **decided**: setup configures postscreen as the pre-smtpd gatekeeper; its drops are observed via the mail-log importer (ADR-0002).
 - **rspamd integration** — recommended for DKIM/DMARC, separate PRD
-- **PHP-level stdin size guard** — defense-in-depth, separate PRD
+- **PHP-level stdin size guard** — **decided**: the pipe command buffers stdin and tempfails input exceeding `message-size-limit`.
 - **Queue worker architecture** — long-term architectural change, separate PRD
 
 ---

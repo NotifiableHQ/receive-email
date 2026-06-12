@@ -1,13 +1,20 @@
 <?php
 
+use Illuminate\Events\Dispatcher;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Notifiable\ReceiveEmail\ApplyFilters;
 use Notifiable\ReceiveEmail\Contracts\EmailFilterContract;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Events\EmailRejected;
 use Notifiable\ReceiveEmail\Exceptions\InvalidFilterException;
+use Notifiable\ReceiveEmail\Exceptions\MalformedMailException;
 use Notifiable\ReceiveEmail\Facades\ParsedMail;
+use Notifiable\ReceiveEmail\Filters\SenderAddressBlacklistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderAddressWhitelistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderDomainBlacklistFilter;
+use Notifiable\ReceiveEmail\Filters\SenderDomainWhitelistFilter;
 
 beforeEach(function () {
     Event::fake();
@@ -128,6 +135,152 @@ it('stops at the first failing filter', function () {
     Event::assertDispatched(function (EmailRejected $event) use ($failingClass) {
         return $event->filterClass === $failingClass;
     });
+});
+
+it('skips the built-in list filters in the pipe', function () {
+    Config::set('receive_email.email-filters', [
+        SenderDomainWhitelistFilter::class,
+        SenderDomainBlacklistFilter::class,
+        SenderAddressWhitelistFilter::class,
+        SenderAddressBlacklistFilter::class,
+    ]);
+
+    // Every built-in filter would reject this sender if it were evaluated:
+    // the address is blacklisted and no whitelist matches it.
+    Config::set('receive_email.sender-address-blacklist', ['blocked@example.com']);
+    Config::set('receive_email.sender-domain-blacklist', ['example.com']);
+    Config::set('receive_email.sender-address-whitelist', ['other@trusted.test']);
+    Config::set('receive_email.sender-domain-whitelist', ['trusted.test']);
+
+    $fakeMail = ParsedMail::fake([
+        'sender' => ['address' => 'blocked@example.com', 'display' => 'Blocked Sender'],
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeTrue();
+    Event::assertNotDispatched(EmailRejected::class);
+});
+
+it('still runs custom filters when built-in filters are also configured', function () {
+    $customFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $customClass = get_class($customFilter);
+    app()->instance($customClass, $customFilter);
+
+    Config::set('receive_email.email-filters', [
+        SenderAddressBlacklistFilter::class,
+        $customClass,
+    ]);
+
+    $fakeMail = ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse();
+    Event::assertDispatched(function (EmailRejected $event) use ($customClass) {
+        return $event->filterClass === $customClass;
+    });
+});
+
+it('dispatches EmailRejected with a null mail when the rejected message cannot be fully parsed', function () {
+    $rejectingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($rejectingFilter);
+    app()->instance($filterClass, $rejectingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    // The filter rejected on the headers it could read; building the full
+    // Mail payload still fails (say, a missing Message-ID). The reject
+    // verdict must win — never converted into kept Malformed Mail.
+    $fakeMail = ParsedMail::fake([
+        'mail' => fn () => throw MalformedMailException::missingHeader('message-id'),
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse();
+    Event::assertDispatched(function (EmailRejected $event) use ($filterClass) {
+        return $event->filterClass === $filterClass
+            && $event->mail === null;
+    });
+});
+
+it('still rejects and logs when an EmailRejected listener throws', function () {
+    // Replace the fake from beforeEach with a real dispatcher so the
+    // throwing listener actually runs.
+    Event::swap(new Dispatcher(app()));
+    Log::spy();
+
+    $dispatched = 0;
+    Event::listen(EmailRejected::class, function () use (&$dispatched) {
+        $dispatched++;
+
+        throw new RuntimeException('Listener failure.');
+    });
+
+    // Create a mock filter that fails
+    $failingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            return false;
+        }
+    };
+
+    $filterClass = get_class($failingFilter);
+    app()->instance($filterClass, $failingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    $fakeMail = ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect($applyFilters->handle($fakeMail))->toBeFalse()
+        ->and($dispatched)->toBe(1);
+    Log::shouldHaveReceived('error')->once();
+});
+
+it('lets filter execution errors escape unswallowed', function () {
+    // Create a mock filter that fails like a transient outage would
+    $throwingFilter = new class implements EmailFilterContract
+    {
+        public function filter(ParsedMailContract $parsedMail): bool
+        {
+            throw new RuntimeException('Database is down.');
+        }
+    };
+
+    $filterClass = get_class($throwingFilter);
+    app()->instance($filterClass, $throwingFilter);
+    Config::set('receive_email.email-filters', [$filterClass]);
+
+    ParsedMail::fake([
+        'to' => [['address' => 'test@example.com', 'display' => 'Test User']],
+    ]);
+
+    $applyFilters = new ApplyFilters;
+
+    expect(fn () => $applyFilters->handle(ParsedMail::getFacadeRoot()))
+        ->toThrow(RuntimeException::class);
+    Event::assertNotDispatched(EmailRejected::class);
 });
 
 it('throws exception when filter is invalid', function () {

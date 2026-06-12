@@ -3,7 +3,9 @@
 namespace Notifiable\ReceiveEmail;
 
 use Carbon\CarbonImmutable;
+use Carbon\Exceptions\InvalidFormatException;
 use InvalidArgumentException;
+use LogicException;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Data\Mail;
@@ -63,7 +65,35 @@ class ParserParsedMail implements ParsedMailContract
 
     public function store(string $path): bool
     {
-        return storage()->put($path, $this->parser->getStream());
+        return storage()->put($path, $this->raw());
+    }
+
+    /**
+     * The raw message exactly as the parser holds it: a stream for Stream
+     * and Path sources, the original text for Text sources. The vendor
+     * accessors are each null unless their source type populated them
+     * (despite docblocks claiming otherwise), and passing that null to
+     * the disk would silently store nothing.
+     *
+     * @return resource|string
+     */
+    private function raw()
+    {
+        /** @var resource|null $stream */
+        $stream = $this->parser->getStream();
+
+        if (is_resource($stream)) {
+            return $stream;
+        }
+
+        /** @var string|null $data */
+        $data = $this->parser->getData();
+
+        if (is_string($data) && $data !== '') {
+            return $data;
+        }
+
+        throw new LogicException('Cannot store a mail that has no source; call source() first.');
     }
 
     public function id(): string
@@ -73,7 +103,14 @@ class ParserParsedMail implements ParsedMailContract
 
     public function date(): CarbonImmutable
     {
-        return $this->date ??= CarbonImmutable::parse($this->getHeaderOrFail('date'))->utc();
+        try {
+            return $this->date ??= CarbonImmutable::parse($this->getHeaderOrFail('date'))->utc();
+        } catch (InvalidFormatException) {
+            // A Date header that is present but unparseable is Malformed
+            // Mail — kept and announced, never tempfailed into Postfix's
+            // multi-day retry loop.
+            throw MalformedMailException::invalidHeader('date');
+        }
     }
 
     public function sender(): Address
@@ -89,7 +126,14 @@ class ParserParsedMail implements ParsedMailContract
             throw MalformedMailException::missingSender();
         }
 
-        return $this->sender ??= Address::from($sender[0]);
+        try {
+            return $this->sender ??= Address::from($sender[0]);
+        } catch (InvalidArgumentException) {
+            // A sender that is present but not a valid address is Malformed
+            // Mail — kept and announced, never tempfailed into Postfix's
+            // multi-day retry loop (matching date() above).
+            throw MalformedMailException::invalidSender();
+        }
     }
 
     public function subject(): ?string
@@ -102,7 +146,7 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function to(): array
     {
-        return $this->to ??= Address::fromMany($this->parser->getAddresses('to'));
+        return $this->to ??= $this->addresses('to');
     }
 
     /**
@@ -110,7 +154,7 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function cc(): array
     {
-        return $this->cc ??= Address::fromMany($this->parser->getAddresses('cc'));
+        return $this->cc ??= $this->addresses('cc');
     }
 
     /**
@@ -118,7 +162,22 @@ class ParserParsedMail implements ParsedMailContract
      */
     public function bcc(): array
     {
-        return $this->bcc ??= Address::fromMany($this->parser->getAddresses('bcc'));
+        return $this->bcc ??= $this->addresses('bcc');
+    }
+
+    /**
+     * Same classification as sender(): an address header that is present
+     * but unparsable is Malformed Mail, not an InvalidArgumentException.
+     *
+     * @return Address[]
+     */
+    private function addresses(string $header): array
+    {
+        try {
+            return Address::fromMany($this->parser->getAddresses($header));
+        } catch (InvalidArgumentException) {
+            throw MalformedMailException::invalidHeader($header);
+        }
     }
 
     public function recipients(): Recipients
