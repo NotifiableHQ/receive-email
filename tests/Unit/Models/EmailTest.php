@@ -1,5 +1,6 @@
 <?php
 
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Config;
@@ -32,6 +33,46 @@ it('belongs to a sender', function () {
     $email = new Email;
 
     expect($email->sender())->toBeInstanceOf(BelongsTo::class);
+});
+
+it('round-trips envelope fields and parsed_at', function () {
+    $email = Email::create([
+        'envelope_sender' => 'sender@example.com',
+        'envelope_recipients' => ['first@example.com', 'second@example.com'],
+        'client_address' => '203.0.113.7',
+        'queue_id' => '4cV5xK1r2bz3',
+        'parsed_at' => now(),
+    ]);
+
+    $email->refresh();
+
+    expect($email->envelope_sender)->toBe('sender@example.com')
+        ->and($email->envelope_recipients)->toBe(['first@example.com', 'second@example.com'])
+        ->and($email->client_address)->toBe('203.0.113.7')
+        ->and($email->queue_id)->toBe('4cV5xK1r2bz3')
+        ->and($email->parsed_at)->toBeInstanceOf(CarbonImmutable::class);
+});
+
+it('stores Malformed Mail without header enrichment', function () {
+    $email = Email::create([
+        'envelope_recipients' => ['recipient@example.com'],
+    ]);
+
+    $email->refresh();
+
+    expect($email->message_id)->toBeNull()
+        ->and($email->sent_at)->toBeNull()
+        ->and($email->parsed_at)->toBeNull()
+        ->and($email->sender)->toBeNull();
+});
+
+it('stores two emails bearing the same Message-ID', function () {
+    $messageId = '<duplicate-id@example.com>';
+
+    Email::create(['message_id' => $messageId]);
+    Email::create(['message_id' => $messageId]);
+
+    expect(Email::where('message_id', $messageId)->count())->toBe(2);
 });
 
 it('throws exception when generating path for unsaved email', function () {

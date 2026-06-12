@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Storage;
 use Notifiable\ReceiveEmail\Contracts\ParsedMailContract;
 use Notifiable\ReceiveEmail\Data\Address;
 use Notifiable\ReceiveEmail\Events\EmailReceived;
+use Notifiable\ReceiveEmail\Models\Email;
 use Notifiable\ReceiveEmail\Models\Sender;
 use Notifiable\ReceiveEmail\StoreAndDispatch;
 
@@ -52,6 +53,28 @@ it('stores incoming email and dispatches event', function () {
     Event::assertDispatched(EmailReceived::class, function ($event) use ($email) {
         return $event->email->is($email);
     });
+});
+
+it('stores two deliveries bearing the same Message-ID', function () {
+    Event::fake();
+
+    $messageId = '<duplicate-id@example.com>';
+    $date = CarbonImmutable::now();
+    $sender = new Address('sender@example.com', 'Sender Name');
+
+    $mockParsedMail = mock(ParsedMailContract::class);
+    $mockParsedMail->shouldReceive('id')->andReturn($messageId);
+    $mockParsedMail->shouldReceive('date')->andReturn($date);
+    $mockParsedMail->shouldReceive('sender')->andReturn($sender);
+    $mockParsedMail->shouldReceive('store')->andReturn(true);
+
+    $storeAndDispatch = new StoreAndDispatch;
+    $storeAndDispatch->handle($mockParsedMail);
+    $storeAndDispatch->handle($mockParsedMail);
+
+    expect(Email::where('message_id', $messageId)->count())->toBe(2);
+
+    Event::assertDispatchedTimes(EmailReceived::class, 2);
 });
 
 it('stores the file before committing the database transaction', function () {

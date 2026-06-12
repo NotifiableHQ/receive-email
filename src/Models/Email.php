@@ -17,9 +17,15 @@ use function Notifiable\ReceiveEmail\storage;
 
 /**
  * @property string $ulid
- * @property string $message_id
- * @property-read  Sender $sender
- * @property CarbonImmutable $sent_at
+ * @property string|null $envelope_sender Envelope Sender (SMTP `MAIL FROM`); null for the null sender (`MAIL FROM:<>`)
+ * @property array<int, string> $envelope_recipients Envelope Recipients (SMTP `RCPT TO`)
+ * @property string|null $client_address
+ * @property string|null $queue_id
+ * @property string|null $message_id Header enrichment; null for Malformed Mail
+ * @property string|null $sender_ulid
+ * @property-read  Sender|null $sender Header Sender; null for Malformed Mail
+ * @property CarbonImmutable|null $sent_at Header enrichment; null for Malformed Mail
+ * @property CarbonImmutable|null $parsed_at Null until header parsing succeeds
  * @property CarbonImmutable|null $created_at
  */
 class Email extends Model
@@ -34,8 +40,14 @@ class Email extends Model
 
     protected $with = ['sender'];
 
+    protected $attributes = [
+        'envelope_recipients' => '[]',
+    ];
+
     protected $casts = [
+        'envelope_recipients' => 'array',
         'sent_at' => 'immutable_datetime',
+        'parsed_at' => 'immutable_datetime',
         'created_at' => 'immutable_datetime',
     ];
 
